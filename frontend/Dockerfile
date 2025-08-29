@@ -1,6 +1,9 @@
 # Use the official Node.js image as the base image
 FROM node:alpine
 
+# Install curl for healthchecks
+RUN apk add --no-cache curl
+
 # Set the working directory inside the container
 WORKDIR /app
 
@@ -9,9 +12,3 @@ COPY . .
 
 # Install the dependencies
 RUN npm install
-
-# Expose the frontend port
-EXPOSE 8181
-
-# Command to run the Vite development server w/ server
-CMD ["npm", "run", "dev", "--", "--host"]

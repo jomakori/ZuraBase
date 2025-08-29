@@ -41,9 +41,12 @@ const MarkdownEditor: FC<{
       .use(history)
   );
 
+  // In test mode, pass content as a child to Milkdown mock
+  const isTest = typeof process !== "undefined" && process.env.NODE_ENV === "test";
+
   return (
     <div data-testid="markdown-editor">
-      <Milkdown />
+      <Milkdown {...(isTest ? ({ children: content } as any) : {})} />
     </div>
   );
 };

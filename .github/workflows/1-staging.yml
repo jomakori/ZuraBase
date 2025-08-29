@@ -70,7 +70,6 @@ jobs:
             echo "EOF"
           } >> $GITHUB_OUTPUT
 
-
       - name: Create Release PR
         if: steps.check-pr.outputs.exists == '0'
         uses: devops-infra/action-pull-request@master
@@ -100,11 +99,19 @@ jobs:
         with:
           lfs: true
 
-  # ┌────────────────────────────────────────────────────────────────────────────────────┐
-  # │ Setup Deps                                                                         │
-  # └────────────────────────────────────────────────────────────────────────────────────┘
+      # ┌────────────────────────────────────────────────────────────────────────────────────┐
+      # │ Setup Deps                                                                         │
+      # └────────────────────────────────────────────────────────────────────────────────────┘
       - name: Install Doppler CLI
         uses: dopplerhq/cli-action@master
+
+      - name: Cache Devbox store
+        uses: actions/cache@main
+        with:
+          path: ~/.cache/devbox
+          key: devbox-${{ hashFiles('devbox.lock') }}
+          restore-keys: |
+            devbox-
 
       - name: Install Devbox
         uses: jetpack-io/devbox-install-action@main
@@ -148,16 +155,18 @@ jobs:
           script: |
             core.setFailed("Semantic version is null. See logs.")
 
-  # ┌─────────────────────────────────────────────────────────────────────────────┐
-  # │       Build/push images                                                     │
-  # └─────────────────────────────────────────────────────────────────────────────┘
+      # ┌─────────────────────────────────────────────────────────────────────────────┐
+      # │       Build/push images                                                     │
+      # └─────────────────────────────────────────────────────────────────────────────┘
       - name: Backend - Build & Push image
         env:
+          BUILD_ENV: stg
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/note-app-backend
           IMAGE_TAG: ${{ steps.version.outputs.semantic_version }} # Since it was changed post-fetch
         run: |
-          devbox run build_backend
+          devbox run build_push
+          echo '✅ Backend image built and pushed'
 
       - name: Frontend - Build & Push image
         env:
@@ -166,7 +175,8 @@ jobs:
           IMAGE_TAG: ${{ steps.version.outputs.semantic_version }} # Since it was changed post-fetch
           REPO: ghcr.io/${{ github.repository }}
         run: |
-          devbox run build_frontend
+          devbox run build_push
+          echo '✅ Frontend image built and pushed'
 
   deploy:
     name: Deploy Staging
@@ -174,9 +184,9 @@ jobs:
     environment: staging
     runs-on: ubuntu-latest
     steps:
-  # ┌─────────────────────────────────────────────────────────────────────────────┐
-  # │       Setup deps                                                            │
-  # └─────────────────────────────────────────────────────────────────────────────┘
+      # ┌─────────────────────────────────────────────────────────────────────────────┐
+      # │       Setup deps                                                            │
+      # └─────────────────────────────────────────────────────────────────────────────┘
       - name: Fetch Doppler Secrets
         id: doppler
         uses: dopplerhq/secrets-fetch-action@main
@@ -190,21 +200,26 @@ jobs:
           repository: jomakori/gke_GitOps
           token: ${{ steps.doppler.outputs.GITOPS_GH_TOKEN }}
 
+      - name: Cache Devbox store
+        uses: actions/cache@main
+        with:
+          path: ~/.cache/devbox
+          key: devbox-${{ hashFiles('devbox.lock') }}
+          restore-keys: |
+            devbox-
+
       - name: Install Devbox
         uses: jetpack-io/devbox-install-action@main
         with:
           enable-cache: true
 
-  # ┌─────────────────────────────────────────────────────────────────────────────┐
-  # │   Deploy env                                                                │
-  # │   Note: This uses a different `devbox.json` stored in the gitops repo       │
-  # └─────────────────────────────────────────────────────────────────────────────┘
       - name: Deploy Staging
         env:
           CONTAINER_TAG: ${{ steps.doppler.outputs.SEMANTIC_VERSION }} #retrieved from build step
           ENV_NUM: 0 # staging env
-          GIT_MESSAGE: "deploy(notes-app): Test changes in staging: ${CONTAINER_TAG}"
         run: |
+          GIT_MESSAGE="deploy(notes-app): Test changes in staging: $CONTAINER_TAG"
+          export GIT_MESSAGE
           devbox run deploy
 
   comment-pr:
@@ -226,7 +241,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
           msg: |
-            ## `Staging` env deployed ✅
+            ## Deployed `Staging` ✅
             - ### [Notes App API (backend)](https://staging-notes-app.intrc.net/)
             - ### [Notes App UI (frontend)](https://staging-flower.intrc.net/)
 
@@ -235,6 +250,7 @@ jobs:
             - #### Confirming `rev` label in EKS pods/deployments = PR number
 
             ## 📄 Checklist before merging to PROD
+            - [ ] Verify deployment
             - [ ] Confirm Changes
             - [ ] Merge PR - to release changes to production.
 

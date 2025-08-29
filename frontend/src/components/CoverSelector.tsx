@@ -2,7 +2,7 @@ import React, { FC, Fragment, useEffect, useMemo, useState } from "react";
 import debouce from "lodash.debounce";
 import { Dialog, Transition } from "@headlessui/react";
 import { MagnifyingGlass, X } from "@phosphor-icons/react";
-import Client, { APIError, pexels } from "../client.ts";
+import { APIError, searchPhoto, SearchResponse } from "../client";
 
 /**
  * A slide-over panel that allows the user to search for a cover image.
@@ -11,13 +11,12 @@ const CoverSelector: FC<{
   open: boolean;
   setOpen: (isOpen: boolean) => void;
   setCoverImage: (url: string) => void;
-  client: Client;
-}> = ({ open, setOpen, setCoverImage, client }) => {
+}> = ({ open, setOpen, setCoverImage }) => {
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [searchQuery, setSearchQuery] = useState<string>("");
 
-  // The response from the Pexels photo API, proxied through the Encore backend
-  const [response, setResponse] = useState<pexels.SearchResponse | undefined>(
+  // The response from the Pexels photo API, proxied through the backend
+  const [response, setResponse] = useState<SearchResponse | undefined>(
     undefined
   );
   const [error, setError] = useState<APIError>();
@@ -37,7 +36,7 @@ const CoverSelector: FC<{
       setError(undefined);
       try {
         // Fetch list of cover images that match the search query
-        const response = await client.pexels.SearchPhoto(searchQuery);
+        const response = await searchPhoto(searchQuery);
         setResponse(response);
       } catch (err) {
         setError(err as APIError);

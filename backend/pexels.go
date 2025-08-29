@@ -1,4 +1,4 @@
-package pexels
+package main
 
 import (
 	"context"
@@ -22,7 +22,6 @@ type SearchResponse struct {
 	} `json:"photos"`
 }
 
-//encore:api public method=GET path=/images/:query
 func SearchPhoto(ctx context.Context, query string) (*SearchResponse, error) {
 	// Create a new http client to proxy the request to the Pexels API.
 	URL := "https://api.pexels.com/v1/search?query=" + url.QueryEscape(query)

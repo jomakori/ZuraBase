@@ -35,7 +35,7 @@
 
 ## Overview
 
-This repository hosts the markdown notes application, both the frontend and backend code. It is built using Encore.Go and is a tweaked version of [its original](https://github.com/encoredev/examples/tree/main/meeting-notes)
+This repository hosts the markdown notes application, including both the frontend and backend code. It is a markdown notes app built with a Go backend and a Node.js (React/TypeScript) frontend.
 
 
 ![Frontend](./images/demo.gif)
@@ -59,9 +59,10 @@ The backend uses an SQL database to store meeting notes and has three API endpoi
 This project requires the following dependencies:
 
 - **Programming Language:** TypeScript, Go
-- **Package Manager:** npm, Go, Encore modules
+- **Package Manager:** NPM, Go
+- **Secrets Manager:** Doppler
 - **Container Runtime:** Docker
-- **Testing:** Devbox
+- **Testing:** Pre-commit, Devbox
 
 ## Developing locally
 
@@ -71,19 +72,7 @@ You can run the api and ui together using `docker-compose`:
 make up
 ```
 
-Otherwise if you want access to the api dashboard via Encore, you can run:
-```bash
-# Backend first
-make backend_up
-
-# Frontend (in another tab)
-make frontend_up
-```
-
-### API Developer Dashboard - via Encore
-
-While `make backend_up` is running, open [http://localhost:9400/](http://localhost:9400/) to view Encore's local developer dashboard.
-Here you can see the request you just made and a view a trace of the response. The frontend is accessible via [http://localhost:8181/](http://localhost:8181/)
+The backend API will be available at [http://localhost:8080/](http://localhost:8080/) and the frontend at [http://localhost:8181/](http://localhost:8181/).
 
 ## Testing
 
@@ -125,8 +114,13 @@ devbox test_be
    git commit -m 'feat(category): <insert commit message>'
    gh pr create --base staging --head <your-branch-name>
    ```
-6. **Review/Test**: Once your PR is reviewed and approved, merging it will trigger testing and deploy changes to the `staging` environment
-7. **Release changes to PROD:** Confirm changes on `staging`. If changes look good, merge the `Release` PR to `main` - which will deploy changes to `Production`
+6. **Test/Deploy to Staging**:
+   - Once the PR has been reviewed and approved - merge into `staging` to trigger testing
+   - When tests pass - changes are deployed to `staging`
+   - The `Release` PR is auto-generated - w/ the same content as the `WIP` PR
+7. **Release changes to PROD:**
+   - Confirm changes on `staging`
+   - If changes look good - merge the `Release` PR to `main` - which will deploy changes to `Production`
 </details>
 
 ### Contributors

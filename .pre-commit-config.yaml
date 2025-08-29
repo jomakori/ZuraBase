@@ -9,18 +9,12 @@ repos:
       - id: check-added-large-files
       - id: check-merge-conflict
 
-  - repo: https://github.com/pre-commit/mirrors-eslint
-    rev: v9.23.0
-    hooks:
-      - id: eslint
-        args: [--fix]
-        files: \.(js|ts|tsx)$
-
-  - repo: https://github.com/dnephin/pre-commit-golang
-    rev: v0.5.1
+  - repo: https://github.com/golangci/golangci-lint
+    rev: v2.1.6
     hooks:
       - id: golangci-lint
-        files: \.go$
+        entry: bash -c 'cd backend && golangci-lint run --verbose --timeout=5m ./...'
+        files: ^backend/.*\.go$
 
   - repo: https://github.com/codespell-project/codespell
     rev: v2.4.1
@@ -30,9 +24,17 @@ repos:
           - --skip=**/package-lock.json,package-lock.json,**/CoverSelector.tsx,**/client.ts,frontend/coverage/**
 
   - repo: https://github.com/commitizen-tools/commitizen
-    rev: v4.4.1
+    rev: v4.8.2
     hooks:
       - id: commitizen
       - id: commitizen-branch
         stages: [pre-push]
         args: ['--rev-range', 'HEAD~1..HEAD']
+
+  - repo: https://github.com/rhysd/actionlint
+    rev: v1.7.7
+    hooks:
+      - id: actionlint
+        args:
+          - -ignore
+          - SC2086

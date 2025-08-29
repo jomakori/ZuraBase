@@ -5,42 +5,31 @@
     "go-junit-report@latest",
     "pre-commit@latest",
     "golangci-lint@latest",
-    "github:encoredev/encore-flake",
     "docker-buildx@latest"
   ],
   "shell": {
     "scripts": {
-      "test_fe": [
-        "mkdir -p test-results && echo '✅ Test Results dir created'",
-        "cd frontend && npm install && npm test",
-        "echo '✅ Frontend tests completed'"
-      ],
-      "test_be": [
-        "mkdir -p test-results && echo '✅ Test Results dir created'",
-        "encore test ./note ./pexels -cover && encore test ./note ./pexels -cover -v 2>&1 | go-junit-report -set-exit-code > test-results/backend-report.xml",
-        "echo '✅ Backend tests completed'"
-      ],
       "pre-commit": [
         "pre-commit run --all-files",
         "echo '✅ Pre-commit checks completed'"
       ],
-      "build_backend": [
-        "for var in GITHUB_TOKEN GH_USER IMAGE_NAME IMAGE_TAG; do eval \"value=\\$$var\"; [ -z \"$value\" ] && { echo \"Error: $var is not set.\"; exit 1; }; done",
-        "echo '✅ Env vars confirmed'",
-        "echo \"$GITHUB_TOKEN\" | docker login ghcr.io --username \"$GH_USER\" --password-stdin",
-        "echo '✅ Logged into GHCR registry'",
-        "encore build docker \"$IMAGE_NAME:$IMAGE_TAG\" --config encore.prod.json",
-        "docker push \"$IMAGE_NAME:$IMAGE_TAG\"",
-        "echo '✅ Backend image built and pushed'"
+      "test_fe": [
+        "mkdir -p test-results && echo '✅ Test Results dir created'",
+        "cd frontend && npm install && npm test",
+        "echo '🧪 Frontend tests completed'"
       ],
-      "build_frontend": [
+      "test_be": [
+        "mkdir -p test-results && echo '✅ Test Results dir created'",
+        "make test_be",
+        "echo '🧪 Backend tests completed'"
+      ],
+      "build_push": [
         "for var in GITHUB_TOKEN GH_USER IMAGE_NAME IMAGE_TAG REPO; do eval \"value=\\$$var\"; [ -z \"$value\" ] && { echo \"Error: $var is not set.\"; exit 1; }; done",
         "echo '✅ Env vars confirmed'",
         "echo \"$GITHUB_TOKEN\" | docker login ghcr.io --username \"$GH_USER\" --password-stdin",
         "echo '✅ Logged into GHCR registry'",
         "cd frontend && docker buildx create --use --name ci_build || true",
         "docker buildx build --builder ci_build --tag \"$IMAGE_NAME:$IMAGE_TAG\" --cache-from \"type=registry,ref=${REPO}:cache\" --cache-to \"type=registry,ref=${REPO}:cache,mode=max\" --push .",
-        "echo '✅ Frontend image built and pushed'"
       ]
     }
   }
