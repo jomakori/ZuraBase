@@ -60,9 +60,9 @@ jobs:
         with:
           enable-cache: 'true'
 
-      - name: Pre-commit - Lint Testing
-        run:
-          devbox run pre-commit
+      - name: Pre-commit - Lint Testing (via Devbox)
+        run: devbox run pre-commit
+        id: precommit
 
       - name: Comment on PR
         uses: mshick/add-pr-comment@main
@@ -73,7 +73,7 @@ jobs:
             When you merge the PR, `testing` will trigger - otherwise it can be manually triggered via the UI
 
       - name: Fail-catch - Pre-commit Checks
-        if: ${{ failure() && steps.precommit.conclusion == 'failure' }}
+        if: ${{ failure() && steps.precommit.outcome == 'failure' }}
         uses: actions/github-script@main
         with:
           script: |
@@ -87,7 +87,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || (github.event_name == 'merge_group' && github.event.action == 'enqueued')
     runs-on: ubuntu-latest
     steps:
-      - name: Check for Open Release PRs
+      - name: Check - Active Release PRs
         uses: juliangruber/find-pull-request-action@v1
         id: find-prs
         with:
@@ -115,6 +115,11 @@ jobs:
         with:
           lfs: true
 
+      - name: Install Doppler CLI
+        uses: dopplerhq/cli-action@v3
+        with:
+          doppler-token: ${{ secrets.DEV_DOPPLER_TOKEN }}
+
       - name: Fetch Doppler Secrets
         id: doppler
         uses: dopplerhq/secrets-fetch-action@main
@@ -136,6 +141,8 @@ jobs:
       # Note: Devbox reads env vars - dumped by Doppler
       - name: Backend - Perform Testing
         run: devbox run test_be
+        env:
+          DOPPLER_TOKEN: ${{ secrets.DEV_DOPPLER_TOKEN }}
 
       - name: Frontend - Perform Testing
         run: devbox run test_fe

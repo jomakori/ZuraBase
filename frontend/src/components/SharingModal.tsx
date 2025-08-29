@@ -55,6 +55,7 @@ const SharingModal: FC<{
                         className="h-10 w-full rounded-sm border border-black border-opacity-50 px-3 text-sm"
                         type="text"
                         value={window.location.href}
+                        readOnly
                       />
                     </div>
                   </div>

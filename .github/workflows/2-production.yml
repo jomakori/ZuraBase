@@ -26,11 +26,19 @@ jobs:
         with:
           lfs: true
 
-  # ┌────────────────────────────────────────────────────────────────────────────────────┐
-  # │ Setup Deps                                                                         │
-  # └────────────────────────────────────────────────────────────────────────────────────┘
+      # ┌────────────────────────────────────────────────────────────────────────────────────┐
+      # │ Setup Deps                                                                         │
+      # └────────────────────────────────────────────────────────────────────────────────────┘
       - name: Install Doppler CLI
         uses: dopplerhq/cli-action@master
+
+      - name: Cache Devbox store
+        uses: actions/cache@main
+        with:
+          path: ~/.cache/devbox
+          key: devbox-${{ hashFiles('devbox.lock') }}
+          restore-keys: |
+            devbox-
 
       - name: Install Devbox
         uses: jetpack-io/devbox-install-action@main
@@ -65,16 +73,18 @@ jobs:
         env:
           DOPPLER_TOKEN: ${{ secrets.PROD_DOPPLER_TOKEN }}
 
-  # ┌─────────────────────────────────────────────────────────────────────────────┐
-  # │       Build/push images                                                     │
-  # └─────────────────────────────────────────────────────────────────────────────┘
+      # ┌─────────────────────────────────────────────────────────────────────────────┐
+      # │       Build/push images                                                     │
+      # └─────────────────────────────────────────────────────────────────────────────┘
       - name: Backend - Build & Push image
         env:
+          BUILD_ENV: prod
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/note-app-backend
           IMAGE_TAG: ${{ steps.semantic.outputs.new_release_version }}
         run: |
-          devbox run build_backend
+          devbox run build_push
+          echo '✅ Frontend image built and pushed'
 
       - name: Frontend - Build & Push image
         env:
@@ -83,7 +93,8 @@ jobs:
           IMAGE_TAG: ${{ steps.semantic.outputs.new_release_version }} # Since it was changed post-fetch
           REPO: ghcr.io/${{ github.repository }}
         run: |
-          devbox run build_frontend
+          devbox run build_push
+          echo '✅ Backend image built and pushed'
 
   deploy:
     name: Release Production
@@ -91,9 +102,9 @@ jobs:
     environment: production
     runs-on: ubuntu-latest
     steps:
-  # ┌─────────────────────────────────────────────────────────────────────────────┐
-  # │       Setup deps                                                            │
-  # └─────────────────────────────────────────────────────────────────────────────┘
+      # ┌─────────────────────────────────────────────────────────────────────────────┐
+      # │       Setup deps                                                            │
+      # └─────────────────────────────────────────────────────────────────────────────┘
       - name: Fetch Doppler Secrets
         id: doppler
         uses: dopplerhq/secrets-fetch-action@main
@@ -107,18 +118,51 @@ jobs:
           repository: jomakori/gke_GitOps
           token: ${{ steps.doppler.outputs.GITOPS_GH_TOKEN }}
 
+      - name: Cache Devbox store
+        uses: actions/cache@main
+        with:
+          path: ~/.cache/devbox
+          key: devbox-${{ hashFiles('devbox.lock') }}
+          restore-keys: |
+            devbox-
+
       - name: Install Devbox
         uses: jetpack-io/devbox-install-action@main
         with:
           enable-cache: true
 
-  # ┌─────────────────────────────────────────────────────────────────────────────┐
-  # │       Deploy env                                                            │
-  # └─────────────────────────────────────────────────────────────────────────────┘
       - name: Deploy Release
         env:
           CONTAINER_TAG: ${{ steps.doppler.outputs.SEMANTIC_VERSION }} # value refreshed in step
-          ENV_NUM: 1    # production env
-          GIT_MESSAGE: 'release(notes-app): Upgraded PROD to: ${CONTAINER_TAG}'
+          ENV_NUM: 1 # production env
         run: |
+          GIT_MESSAGE="release(notes-app): Upgraded PROD to: ${CONTAINER_TAG}"
+          export GIT_MESSAGE
           devbox run deploy
+
+  sync-staging:
+    name: Sync Staging <-> Main
+    needs: deploy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@main
+        with:
+          lfs: true
+          fetch-depth: 0 # to get all branches
+          ref: main
+
+      - name: Check - Active Release PRs
+        uses: juliangruber/find-pull-request-action@v1
+        id: find-prs
+        with:
+          branch: staging
+          state: open
+
+      - name: Sync - Staging <-> Main
+        if: steps.find-prs.outputs.number == '' # if null - no active PRs
+        uses: connor-baer/action-sync-branch@main
+        with:
+          branch: staging
+          token: ${{ secrets.GITHUB_TOKEN }}
+          force: true

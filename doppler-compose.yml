@@ -1,36 +1,80 @@
 ---
 # pass env secrets - doppler
 x-doppler: &doppler-env
-  environment:{{range $key, $value := .}}
-    - {{$key}}{{end}}
+  environment:
+  {{- range $key, $value := . }}
+      {{$key}}: "{{$value}}"
+  {{- end }}
 
 # Run app + dependent services
 services:
   backend:
-    <<: *doppler-env            # injects doppler secrets
+    <<: *doppler-env            ## injects doppler secrets
     image: note-app:backend
+    build:
+      context: backend
+      dockerfile: Dockerfile
     ports:
       - 8080:8080
+    command:
+      - ./main
     depends_on:
-      - db
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://backend:8080/health || exit 1"]
+      interval: 5s
+      timeout: 2s
+      retries: 5
 
   frontend:
-    <<: *doppler-env            # injects doppler secrets
+    <<: *doppler-env            ## injects doppler secrets
+    image: note-app:frontend
     build:
       context: ./frontend
       dockerfile: Dockerfile
     ports:
       - 8181:8181
+    command: ["npm", "run", "dev", "--", "--host"]
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://frontend:8181/health || exit 1"]
+      interval: 5s
+      timeout: 2s
+      retries: 5
 
   db:
-    <<: *doppler-env            # injects doppler secrets
+    <<: *doppler-env            ## injects doppler secrets
     image: postgres:alpine
     ports:
       - 5432:5432
     volumes:
       - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 2s
+      retries: 5
+
+  backend-test:
+    <<: *doppler-env
+    image: note-app:backend
+    build:
+      context: backend
+      dockerfile: Dockerfile
+    depends_on:
+      backend:
+        condition: service_healthy
+    command:
+      - /bin/sh
+      - -c
+      - |
+        go test ./tests -json 2>&1 | go-junit-report -parser gojson > test-results/backend-report.xml     # Create tests report
+        go test ./tests -v                                                                                # Confirm tests success or fail
+    volumes:
+      - ./test-results:/app/test-results
 
 volumes:
   db_data:

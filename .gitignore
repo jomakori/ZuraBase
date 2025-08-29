@@ -1,9 +1,6 @@
-/.encore
-encore.gen.go
-encore.gen.cue
-/encore.gen
 .env
 docker-compose.yml
 node_modules/
 test-results/
 coverage/
+devbox.lock

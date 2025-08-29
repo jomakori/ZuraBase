@@ -6,6 +6,7 @@ export default {
     "\\.(css|less|scss|sass)$": "<rootDir>/src/__mocks__/styleMock.js",
     "^@milkdown/(.*)$": "<rootDir>/src/__mocks__/milkdownMock.tsx",
     "^./App$": "<rootDir>/src/__mocks__/AppMock.tsx",
+    "^../src/components/App$": "<rootDir>/src/__mocks__/AppMock.tsx",
     "^./MarkdownEditor$": "<rootDir>/src/__mocks__/MarkdownEditor.tsx",
   },
   transform: {
@@ -30,4 +31,6 @@ export default {
       { outputDirectory: "../test-results", outputName: "frontend-results.xml" },
     ],
   ],
+  // Exclude client.ts from coverage to avoid import.meta issues in Jest
+  coveragePathIgnorePatterns: ["<rootDir>/src/client.ts"],
 };

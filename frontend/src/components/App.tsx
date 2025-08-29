@@ -1,33 +1,65 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { MilkdownProvider } from "@milkdown/react";
 import { FloppyDisk, Image } from "@phosphor-icons/react";
-import Client, { Environment, Local } from "../client";
+import { getNote, saveNote, Note } from "../client";
 import { v4 as uuidv4 } from "uuid";
-import CoverSelector from "./CoverSelector.tsx";
-import MarkdownEditor from "./MarkdownEditor.tsx";
-import SharingModal from "./SharingModal.tsx";
+import CoverSelector from "./CoverSelector";
+import MarkdownEditor from "./MarkdownEditor";
+import SharingModal from "./SharingModal";
 
 /**
- * Returns the Encore request client for either the local or staging environment.
- * If we are running the frontend locally (dev mode) we assume that our Encore backend is also running locally
+ * Returns the request client for either the local or staging environment.
+ * If we are running the frontend locally (dev mode) we assume that our backend is also running locally
  * and make requests to that, otherwise we use the staging client.
  */
-const getRequestClient = () => {
-  return import.meta.env.DEV
-    ? new Client(Local)
-    : new Client(Environment("staging"));
-};
 
-function App() {
-  // Get the request client to make requests to the Encore backend
-  const client = getRequestClient();
+interface AppProps {
+  onInit?: () => void;
+}
 
-  const urlParams = new URLSearchParams(window.location.search);
-  const queryParamID = urlParams.get("id");
+function App({ onInit }: AppProps) {
+
+  const [queryParamID, setQueryParamID] = useState<string | null>(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    return urlParams.get("id");
+  });
 
   const [isLoading, setIsLoading] = useState(true);
   const [coverImage, setCoverImage] = useState("");
-  const [content, setContent] = useState<string>("");
+  const [content, setContent] = useState<string>(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const id = urlParams.get("id");
+    // Use default content if creating a new note, otherwise fetch will set content
+    if (!id) {
+      return `
+# Markdown Meeting Notes
+
+- *Date:* ${new Date().toLocaleDateString()}
+- *Note taker:* Simon Johansson
+- *Attendees:* Marcus, Johan, Erik
+
+---
+
+Write your notes in **markdown** to make pretty meeting notes.
+After saving the document you will get a link that you can share.
+
+`;
+    }
+    return ""; // Content will be fetched in useEffect
+ });
+ const autosaveTimeout = useRef<NodeJS.Timeout | null>(null);
+// Autosave: call saveDocument after user stops typing for 1 second
+
+useEffect(() => {
+  if (!content) return;
+  if (autosaveTimeout.current) clearTimeout(autosaveTimeout.current);
+  autosaveTimeout.current = setTimeout(() => {
+    saveDocument();
+  }, 1000); // 1 second debounce
+  return () => {
+    if (autosaveTimeout.current) clearTimeout(autosaveTimeout.current);
+  };
+}, [content]);
 
   const [showCoverSelector, setShowCoverSelector] = useState(false);
   const [showSharingModal, setShowSharingModal] = useState(false);
@@ -37,42 +69,49 @@ function App() {
       // If we do not have an id then we are creating a new note, nothing needs to be fetched
       if (!queryParamID) {
         setIsLoading(false);
+        if (onInit) onInit();
         return;
       }
       try {
         // Fetch the note from the backend
-        const response = await client.note.GetNote(queryParamID);
+        const response = await getNote(queryParamID);
         setCoverImage(response.cover_url || "");
         setContent(response.text || "");
       } catch (err) {
         console.error(err);
       }
       setIsLoading(false);
+      if (onInit) onInit();
     };
     fetchNote();
-  }, []);
+  }, [queryParamID]);
 
-  const saveDocument = async () => {
+  const saveDocument = useCallback(async () => {
     try {
+      const isInitialSave = !queryParamID;
+      const noteId = queryParamID || uuidv4();
+      console.log("[API] Saving note", { id: noteId, cover_url: coverImage });
       // Send POST request to the backend for saving the note
-      const response = await client.note.SaveNote({
+      const response = await saveNote({
         text: content,
         cover_url: coverImage,
-        // If we have an id then we are updating an existing note, otherwise we are creating a new one
-        id: queryParamID || uuidv4(),
+        id: noteId,
       });
 
-      // Append the id to the url
+      // Update the URL and component state
       const url = new URL(window.location.href);
       url.searchParams.set("id", response.id);
       window.history.pushState(null, "", url.toString());
+      setQueryParamID(response.id); // Update the component state with the new ID
 
-      // We now have saved note with an ID, we can now show the sharing modal
-      setShowSharingModal(true);
+      // Only show the sharing modal on the initial save
+      if (isInitialSave) {
+        setShowSharingModal(true);
+      }
     } catch (err) {
       console.error(err);
     }
-  };
+  }, [content, coverImage, queryParamID]);
 
   return (
     <div className="min-h-full">
@@ -103,7 +142,6 @@ function App() {
             <CoverSelector
               open={showCoverSelector}
               setOpen={setShowCoverSelector}
-              client={client}
               setCoverImage={setCoverImage}
             />
             {isLoading ? (
@@ -118,12 +156,9 @@ function App() {
       </main>
 
       <div className="fixed bottom-5 right-5 flex items-center space-x-4">
-        <button
-          className="flex items-center space-x-2 rounded bg-black px-2 py-1 text-lg text-white duration-200 hover:opacity-80"
-          onClick={() => saveDocument()}
-        >
-          <FloppyDisk size={20} /> <span>Save</span>
-        </button>
+        <div className="flex items-center space-x-2 rounded bg-gray-200 px-2 py-1 text-lg text-gray-700 cursor-default select-none">
+          <FloppyDisk size={20} /> <span>Autosaved</span>
+        </div>
       </div>
 
       <SharingModal open={showSharingModal} setOpen={setShowSharingModal} />
