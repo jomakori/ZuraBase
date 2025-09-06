@@ -24,13 +24,19 @@ type SearchResponse struct {
 
 // SearchPhoto searches for photos using the Pexels API
 func SearchPhoto(ctx context.Context, query string) (*SearchResponse, error) {
+	// Get and validate API key
+	apiKey := os.Getenv("PEXELS_API_KEY")
+	if apiKey == "" {
+		return nil, fmt.Errorf("PEXELS_API_KEY environment variable is not set")
+	}
+
 	// Create a new http client to proxy the request to the Pexels API.
 	URL := "https://api.pexels.com/v1/search?query=" + url.QueryEscape(query)
 	client := &http.Client{}
 	req, _ := http.NewRequest("GET", URL, nil)
 
 	// Add authorization header to the req with the API key.
-	req.Header.Set("Authorization", os.Getenv("PEXELS_API_KEY"))
+	req.Header.Set("Authorization", apiKey)
 
 	// Make the request, and close the response body when we're done.
 	res, err := client.Do(req)

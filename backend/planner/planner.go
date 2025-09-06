@@ -58,8 +58,8 @@ func CreatePlanner(ctx context.Context, title, description, templateID string) (
 	// Generate a new ID for the planner
 	plannerID := generateID()
 	
-	// Log the operation
-	log.Printf("Creating new planner: title=%s, templateID=%s", title, templateID)
+	// Log minimal information
+	log.Printf("Creating new planner with templateID=%s", templateID)
 	
 	// Start a transaction
 	tx, err := db.BeginTx(ctx, nil)
@@ -142,8 +142,8 @@ func CreatePlanner(ctx context.Context, title, description, templateID string) (
 
 // GetPlanner retrieves a planner by ID with all its lanes and cards
 func GetPlanner(ctx context.Context, id string) (*Planner, error) {
-	// Log the operation
-	log.Printf("Getting planner: id=%s", id)
+	// Minimal logging
+	log.Printf("Getting planner with id=%s", id)
 	
 	// Get the planner
 	planner := &Planner{ID: id}
@@ -219,7 +219,7 @@ func GetPlanner(ctx context.Context, id string) (*Planner, error) {
 
 // UpdatePlanner updates a planner's title and description
 func UpdatePlanner(ctx context.Context, id, title, description string) (*Planner, error) {
-	log.Printf("Updating planner: id=%s", id)
+	log.Printf("Updating planner with id=%s", id)
 	
 	_, err := db.ExecContext(ctx, `
 		UPDATE planner
@@ -235,14 +235,14 @@ func UpdatePlanner(ctx context.Context, id, title, description string) (*Planner
 
 // DeletePlanner deletes a planner and all its lanes and cards
 func DeletePlanner(ctx context.Context, id string) error {
-	log.Printf("Deleting planner: id=%s", id)
+	log.Printf("Deleting planner with id=%s", id)
 	_, err := db.ExecContext(ctx, `DELETE FROM planner WHERE id = $1`, id)
 	return err
 }
 
 // ExportPlannerMarkdown exports a planner as a Markdown document
 func ExportPlannerMarkdown(ctx context.Context, id string) (string, error) {
-	log.Printf("Exporting planner as Markdown: id=%s", id)
+	log.Printf("Exporting planner as Markdown with id=%s", id)
 	planner, err := GetPlanner(ctx, id)
 	if err != nil {
 		return "", err
@@ -279,7 +279,7 @@ func ImportPlannerFromMarkdown(ctx context.Context, markdown, templateID string)
 	// This would need a proper Markdown parser in a real implementation
 	// For now, we'll just create a basic planner with the Markdown content as description
 	
-	log.Printf("Importing planner from Markdown, templateID=%s", templateID)
+	log.Printf("Importing planner from Markdown with templateID=%s", templateID)
 	// Extract title from first heading (simplified)
 	title := "Imported Planner"
 	description := markdown

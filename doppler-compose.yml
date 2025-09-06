@@ -74,8 +74,8 @@ services:
       - /bin/sh
       - -c
       - |
-        go test ./tests -json 2>&1 | go-junit-report -parser gojson > test-results/backend-report.xml     # Create tests report
-        go test ./tests -v                                                                                # Confirm tests success or fail
+        gotestsum --junitfile test-results/backend-report.xml ./tests     # Create tests report with gotestsum
+        gotestsum --format testname ./tests                               # Confirm tests success or fail with readable output
     volumes:
       - ./test-results:/app/test-results
 

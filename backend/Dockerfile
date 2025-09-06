@@ -14,7 +14,7 @@ COPY . .
 RUN go mod download
 
 # Setup Go test tools
-RUN go install github.com/jstemmer/go-junit-report/v2@latest
+RUN go install gotest.tools/gotestsum@latest
 RUN mkdir -p test-results
 
 # Build the Go application

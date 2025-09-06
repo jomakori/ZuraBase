@@ -5,10 +5,7 @@
 export function getApiBase(): string {
   const apiEndpoint = import.meta.env.VITE_API_ENDPOINT;
 
-  console.log("[getApiBase] VITE_API_ENDPOINT:", apiEndpoint);
-
   if (!apiEndpoint) {
-    console.error("[getApiBase] ERROR: VITE_API_ENDPOINT is not set");
     throw new Error("VITE_API_ENDPOINT environment variable is not set");
   }
 
@@ -24,10 +21,8 @@ export function getApiBase(): string {
       "localhost",
       window.location.hostname
     );
-    console.log(`[getApiBase] Replacing ${apiEndpoint} with ${newEndpoint}`);
     return newEndpoint;
   }
 
-  console.log("[getApiBase] Using API endpoint:", apiEndpoint);
   return apiEndpoint as string;
 }

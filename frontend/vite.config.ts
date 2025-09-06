@@ -26,7 +26,7 @@ export default defineConfig({
     },
   },
   define: {
-    "process.env": process.env,
+    // Only expose specific environment variables to the client
     "import.meta.env.VITE_API_ENDPOINT": JSON.stringify(
       process.env.VITE_API_ENDPOINT
     ),

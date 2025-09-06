@@ -22,7 +22,7 @@ func Initialize(database *sql.DB) {
 
 // SaveNote saves or updates a note in the database
 func SaveNote(ctx context.Context, note *Note) (*Note, error) {
-	log.Printf("SaveNote: saving note: ID=%s, Text=%s, CoverURL=%s", note.ID, note.Text, note.CoverURL)
+	log.Printf("SaveNote: saving note with ID=%s", note.ID)
 	// Save or update the note in the database.
 	_, err := db.ExecContext(ctx, `
 		INSERT INTO note (id, text, cover_url) VALUES ($1, $2, $3)
@@ -46,7 +46,7 @@ func GetNote(ctx context.Context, id string) (*Note, error) {
 		log.Printf("GetNote: error retrieving note ID=%s: %v", id, err)
 		return nil, err
 	}
-	log.Printf("GetNote: retrieved note: ID=%s, Text=%s, CoverURL=%s", note.ID, note.Text, note.CoverURL)
+	log.Printf("GetNote: retrieved note with ID=%s", note.ID)
 	return note, nil
 }
 

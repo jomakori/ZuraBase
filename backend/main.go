@@ -56,8 +56,8 @@ func CORS(next http.Handler) http.Handler {
 			log.Printf("[CORS] ERROR: UI_ENDPOINT environment variable is not set. CORS will not work properly.")
 		}
 		
-		// Log CORS settings for debugging
-		fmt.Printf("[CORS] Using allowed origin: %s\n", allowedOrigin)
+		// Log CORS settings without exposing full details
+		fmt.Printf("[CORS] CORS configured for API\n")
 		
 		// Set CORS headers
 		w.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
@@ -79,6 +79,14 @@ func CORS(next http.Handler) http.Handler {
 func main() {
 	// Initialize database connection
 	var err error
+	
+	// Validate required environment variables
+	requiredEnvVars := []string{"POSTGRES_USER", "POSTGRES_PASSWORD", "POSTGRES_HOST", "POSTGRES_DB", "UI_ENDPOINT"}
+	for _, envVar := range requiredEnvVars {
+		if os.Getenv(envVar) == "" {
+			log.Fatalf("Required environment variable %s is not set", envVar)
+		}
+	}
 	
 	// Build the connection string from environment variables
 	connStr := fmt.Sprintf("postgres://%s:%s@%s/%s?sslmode=disable",
