@@ -35,13 +35,13 @@ services:
       dockerfile: Dockerfile
     platform: linux/amd64           # run/build as amd64
     ports:
+      - 5173:5173
       - 8181:8181
-    command: ["node", "server.js"]
     depends_on:
       backend:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://frontend:8181/health || exit 1"]
+      test: ["CMD-SHELL", "curl -f http://localhost:5173 || exit 1"]
       interval: 5s
       timeout: 2s
       retries: 5
