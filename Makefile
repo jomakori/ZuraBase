@@ -31,7 +31,7 @@ test_fe: clean_compose conditional_down
 	doppler run --config dev_testing \
 		--mount-template doppler-compose.yml \
 		--mount docker-compose.yml \
-		--command 'docker-compose run --rm frontend npm test'
+		--command 'docker-compose run --build --rm frontend npm test'
 
 #   ┌──────────────────────────────────────────────────────────────────────────┐
 #   │ Conditionals                                                             │

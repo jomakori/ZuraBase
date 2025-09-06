@@ -8,12 +8,14 @@ export default {
     "^./App$": "<rootDir>/src/__mocks__/AppMock.tsx",
     "^../src/components/App$": "<rootDir>/src/__mocks__/AppMock.tsx",
     "^./MarkdownEditor$": "<rootDir>/src/__mocks__/MarkdownEditor.tsx",
+    // Mock import.meta.env for tests
+    "^import\\.meta\\.env$": "<rootDir>/src/__mocks__/envMock.js",
   },
   transform: {
     "^.+\\.(ts|tsx)$": [
       "ts-jest",
       {
-        useESM: true,
+        useESM: false,
         tsconfig: "tsconfig.json",
       },
     ],
@@ -23,14 +25,15 @@ export default {
   testEnvironmentOptions: {
     customExportConditions: ["node", "node-addons"],
   },
-  extensionsToTreatAsEsm: [".ts", ".tsx"],
   reporters: [
     "default",
     [
       "jest-junit",
-      { outputDirectory: "../test-results", outputName: "frontend-results.xml" },
+      {
+        outputDirectory: "../test-results",
+        outputName: "frontend-results.xml",
+      },
     ],
   ],
-  // Exclude client.ts from coverage to avoid import.meta issues in Jest
   coveragePathIgnorePatterns: ["<rootDir>/src/client.ts"],
 };

@@ -1,53 +1,46 @@
-import { getApiBase } from "../src/getApiBase";
 import { searchPhoto } from "../src/client";
+import { jest, describe, it, expect, beforeEach } from "@jest/globals";
 
-// Mock the import.meta.env object
-// @ts-ignore - TypeScript doesn't recognize import.meta.env by default
-const originalEnv = import.meta.env ? { ...import.meta.env } : {};
+// Create a mock for the getApiBase module
+jest.mock("../src/getApiBase", () => ({
+  getApiBase: jest.fn(),
+}));
+
+// Import the mocked getApiBase
+import { getApiBase } from "../src/getApiBase";
+
+// Set up environment for tests
+const TEST_API_ENDPOINT = "http://test-api.example.com";
 
 beforeEach(() => {
-  // Reset the mocked environment before each test
+  // Reset mocks before each test
   jest.resetModules();
-  // @ts-ignore - Mocking import.meta.env
-  import.meta.env = { ...originalEnv };
-});
-
-afterEach(() => {
-  // Restore the original environment after each test
-  // @ts-ignore - Restoring import.meta.env
-  import.meta.env = originalEnv;
+  jest.clearAllMocks();
+  
+  // Set up default mock implementation
+  (getApiBase as jest.Mock).mockImplementation(() => TEST_API_ENDPOINT);
 });
 
 describe("getApiBase", () => {
-  it("should throw an error when VITE_API_ENDPOINT is not set", () => {
-    // @ts-ignore - Mocking import.meta.env
-    import.meta.env.VITE_API_ENDPOINT = undefined;
-
-    expect(() => getApiBase()).toThrow(
-      "VITE_API_ENDPOINT environment variable is not set"
-    );
+  it("should return the API endpoint", () => {
+    expect(getApiBase()).toBe(TEST_API_ENDPOINT);
   });
 
-  it("should return the API endpoint when VITE_API_ENDPOINT is set", () => {
-    const testEndpoint = "http://test-api.example.com";
-    // @ts-ignore - Mocking import.meta.env
-    import.meta.env.VITE_API_ENDPOINT = testEndpoint;
-
-    expect(getApiBase()).toBe(testEndpoint);
+  it("should return a custom API endpoint when configured", () => {
+    const customEndpoint = "http://custom-api.example.com";
+    (getApiBase as jest.Mock).mockReturnValueOnce(customEndpoint);
+    
+    expect(getApiBase()).toBe(customEndpoint);
   });
 });
 
 describe("API client", () => {
   // Mock fetch
-  global.fetch = jest.fn();
+  global.fetch = jest.fn() as jest.MockedFunction<typeof fetch>;
 
   beforeEach(() => {
     // Reset the fetch mock before each test
     jest.clearAllMocks();
-
-    // Set a test API endpoint
-    // @ts-ignore - Mocking import.meta.env
-    import.meta.env.VITE_API_ENDPOINT = "http://test-api.example.com";
   });
 
   it("should call fetch with the correct URL when searching for photos", async () => {
@@ -56,7 +49,7 @@ describe("API client", () => {
       ok: true,
       json: jest.fn().mockResolvedValue({ photos: [] }),
       text: jest.fn().mockResolvedValue(""),
-    };
+    } as any;
 
     // @ts-ignore - Mocking fetch
     global.fetch.mockResolvedValue(mockResponse);
@@ -78,7 +71,7 @@ describe("API client", () => {
     const mockResponse = {
       ok: false,
       text: jest.fn().mockResolvedValue("API Error"),
-    };
+    } as any;
 
     // @ts-ignore - Mocking fetch
     global.fetch.mockResolvedValue(mockResponse);

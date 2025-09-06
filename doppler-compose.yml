@@ -10,7 +10,7 @@ x-doppler: &doppler-env
 services:
   backend:
     <<: *doppler-env            ## injects doppler secrets
-    image: note-app:backend
+    image: zurabase:backend
     build:
       context: backend
       dockerfile: Dockerfile
@@ -29,7 +29,7 @@ services:
 
   frontend:
     <<: *doppler-env            ## injects doppler secrets
-    image: note-app:frontend
+    image: zurabase:frontend
     build:
       context: ./frontend
       dockerfile: Dockerfile
@@ -62,7 +62,7 @@ services:
 
   backend-test:
     <<: *doppler-env
-    image: note-app:backend
+    image: zurabase:backend
     build:
       context: backend
       dockerfile: Dockerfile
