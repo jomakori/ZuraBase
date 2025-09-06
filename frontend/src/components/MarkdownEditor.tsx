@@ -42,11 +42,13 @@ const MarkdownEditor: FC<{
   );
 
   // In test mode, pass content as a child to Milkdown mock
-  const isTest = typeof process !== "undefined" && process.env.NODE_ENV === "test";
+  const isTest =
+    typeof jest !== "undefined" ||
+    (typeof process !== "undefined" && process.env.NODE_ENV === "test");
 
   return (
     <div data-testid="markdown-editor">
-      <Milkdown {...(isTest ? ({ children: content } as any) : {})} />
+      <Milkdown {...(isTest ? ({ content } as any) : {})} />
     </div>
   );
 };

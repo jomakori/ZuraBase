@@ -13,8 +13,8 @@ describe("MarkdownEditor", () => {
     render(<MarkdownEditor {...props} />);
     const editors = await screen.findAllByTestId("markdown-editor");
     // Find the one that contains the expected text
-    const editor = editors.find((el) =>
-      el.textContent && el.textContent.includes("Test content")
+    const editor = editors.find(
+      (el) => el.textContent && el.textContent.includes("Test content")
     );
     expect(editor).toBeDefined();
     if (editor) {

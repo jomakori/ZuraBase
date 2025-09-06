@@ -1,14 +1,13 @@
 /**
  * Minimal API client for the Go backend.
- * Provides functions for notes and image search.
+ * Provides functions for image search.
  */
 
 import { getApiBase } from "./getApiBase";
 
-export interface Note {
-  id: string;
-  text: string;
-  cover_url: string;
+export interface APIError extends Error {
+  status?: number;
+  statusText?: string;
 }
 
 export interface SearchResponse {
@@ -22,31 +21,31 @@ export interface SearchResponse {
   }[];
 }
 
-/** Fetch a note by ID */
-export async function getNote(id: string): Promise<Note> {
-  console.log("[API] getNote", { id });
-  const resp = await fetch(`${getApiBase()}/note/${encodeURIComponent(id)}`);
-  if (!resp.ok) throw new Error(await resp.text());
-  return await resp.json();
-}
-
-/** Save a note (create or update) */
-export async function saveNote(note: Note): Promise<Note> {
-  // For privacy, do not log the note text
-  console.log("[API] saveNote", { id: note.id, cover_url: note.cover_url });
-  const resp = await fetch(`${getApiBase()}/note`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(note),
-  });
-  if (!resp.ok) throw new Error(await resp.text());
-  return await resp.json();
-}
-
 /** Search for images using the backend's /images/:query endpoint */
 export async function searchPhoto(query: string): Promise<SearchResponse> {
   console.log("[API] searchPhoto", { query });
-  const resp = await fetch(`${getApiBase()}/images/${encodeURIComponent(query)}`);
-  if (!resp.ok) throw new Error(await resp.text());
-  return await resp.json();
+  
+  try {
+    const apiBase = getApiBase();
+    console.log("[API] Using API base:", apiBase);
+    
+    const url = `${apiBase}/images/${encodeURIComponent(query)}`;
+    console.log("[API] Request URL:", url);
+    
+    const resp = await fetch(url);
+    console.log("[API] Response status:", resp.status);
+    
+    if (!resp.ok) {
+      const errorText = await resp.text();
+      console.error("[API] Error response:", errorText);
+      throw new Error(errorText);
+    }
+    
+    const data = await resp.json();
+    console.log("[API] Response data:", data);
+    return data;
+  } catch (error) {
+    console.error("[API] Error in searchPhoto:", error);
+    throw error;
+  }
 }

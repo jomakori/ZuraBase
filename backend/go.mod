@@ -1,4 +1,4 @@
-module notes-app
+module zurabase
 
 go 1.23
 

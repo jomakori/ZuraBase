@@ -14,10 +14,10 @@ services:
     build:
       context: backend
       dockerfile: Dockerfile
+    platform: linux/amd64           # run/build as amd64
     ports:
       - 8080:8080
-    command:
-      - ./main
+    command: ["./main"]
     depends_on:
       db:
         condition: service_healthy
@@ -33,9 +33,10 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+    platform: linux/amd64           # run/build as amd64
     ports:
       - 8181:8181
-    command: ["npm", "run", "dev", "--", "--host"]
+    command: ["node", "server.js"]
     depends_on:
       backend:
         condition: service_healthy
@@ -48,6 +49,7 @@ services:
   db:
     <<: *doppler-env            ## injects doppler secrets
     image: postgres:alpine
+    platform: linux/amd64           # run as amd64
     ports:
       - 5432:5432
     volumes:
@@ -64,6 +66,7 @@ services:
     build:
       context: backend
       dockerfile: Dockerfile
+    platform: linux/amd64           # run/build as amd64
     depends_on:
       backend:
         condition: service_healthy

@@ -1,4 +1,4 @@
-package main
+package pexels
 
 import (
 	"context"
@@ -10,7 +10,7 @@ import (
 	"os"
 )
 
-// Object that mirrors the response from the Pexels API.
+// SearchResponse mirrors the response from the Pexels API
 type SearchResponse struct {
 	Photos []struct {
 		Id  int `json:"id"`
@@ -22,6 +22,7 @@ type SearchResponse struct {
 	} `json:"photos"`
 }
 
+// SearchPhoto searches for photos using the Pexels API
 func SearchPhoto(ctx context.Context, query string) (*SearchResponse, error) {
 	// Create a new http client to proxy the request to the Pexels API.
 	URL := "https://api.pexels.com/v1/search?query=" + url.QueryEscape(query)
