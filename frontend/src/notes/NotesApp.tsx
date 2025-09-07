@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import NavBar from "../components/NavBar";
 import { MilkdownProvider } from "@milkdown/react";
 import { FloppyDisk, Image } from "@phosphor-icons/react";
@@ -8,24 +8,24 @@ import { v4 as uuidv4 } from "uuid";
 import CoverSelector from "../components/CoverSelector";
 import MarkdownEditor from "../components/MarkdownEditor";
 import SharingModal from "../components/SharingModal";
+import { useSaveHandler } from "../utils/saveUtils";
 
 interface NotesAppProps {
   onInit?: () => void;
 }
 
 function NotesApp({ onInit }: NotesAppProps) {
-  const [queryParamID, setQueryParamID] = useState<string | null>(() => {
+  // Get ID from URL query parameter
+  const initialId = (() => {
     const urlParams = new URLSearchParams(window.location.search);
     return urlParams.get("id");
-  });
+  })();
 
   const [isLoading, setIsLoading] = useState(true);
   const [coverImage, setCoverImage] = useState("");
   const [content, setContent] = useState<string>(() => {
-    const urlParams = new URLSearchParams(window.location.search);
-    const id = urlParams.get("id");
     // Use default content if creating a new note, otherwise fetch will set content
-    if (!id) {
+    if (!initialId) {
       return `
 # Markdown Meeting Notes
 
@@ -42,19 +42,86 @@ After saving the document you will get a link that you can share.
     }
     return ""; // Content will be fetched in useEffect
   });
-  const autosaveTimeout = useRef<NodeJS.Timeout | null>(null);
-  const [isSaving, setIsSaving] = useState(false);
-  const [lastSaved, setLastSaved] = useState<Date | null>(null);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [showCoverSelector, setShowCoverSelector] = useState(false);
 
-  // Track content changes to set unsaved changes flag
+  // Track the save state for UI display
+  const [saveState, setSaveState] = useState<"unsaved" | "saving" | "saved">(
+    "saved"
+  );
+
+  // Use the modular save handler
+  const saveNoteWrapper = async (id: string | null, data: any) => {
+    const noteId = id || uuidv4();
+    console.log("[NOTES] Saving note", { id: noteId });
+    return saveNote({
+      text: data.text,
+      cover_url: data.cover_url,
+      id: noteId,
+    });
+  };
+
+  // Create a memoized content object that updates when content or coverImage changes
+  const noteContent = { text: content, cover_url: coverImage };
+
+  const {
+    queryParamID,
+    isSaving,
+    lastSaved,
+    showSharingModal,
+    setShowSharingModal,
+    saveDocument,
+  } = useSaveHandler(
+    initialId,
+    saveNoteWrapper,
+    noteContent,
+    hasUnsavedChanges
+  );
+
+  // Track content changes to set unsaved changes flag and trigger auto-save
+  const lastChangeTimeRef = useRef<number>(0);
+  const autoSaveTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Function to schedule auto-save
+  const scheduleAutoSave = useCallback(() => {
+    // Clear any existing timer
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+      autoSaveTimerRef.current = null;
+    }
+
+    // Only schedule auto-save if we have an ID (not first save)
+    if (queryParamID && hasUnsavedChanges) {
+      // Set a timer for auto-save
+      autoSaveTimerRef.current = setTimeout(() => {
+        console.log("[NOTES] Auto-saving due to content change");
+        saveDocument();
+        autoSaveTimerRef.current = null;
+      }, 2000); // Auto-save after 2 seconds of no changes
+    }
+  }, [queryParamID, hasUnsavedChanges, saveDocument]);
+
+  // Track content changes
   useEffect(() => {
     if (!content) return;
-    setHasUnsavedChanges(true);
-  }, [content, coverImage]);
 
-  const [showCoverSelector, setShowCoverSelector] = useState(false);
-  const [showSharingModal, setShowSharingModal] = useState(false);
+    // Set unsaved changes flag
+    setHasUnsavedChanges(true);
+    setSaveState("unsaved");
+
+    // Record the time of this change
+    lastChangeTimeRef.current = Date.now();
+
+    // Schedule auto-save
+    scheduleAutoSave();
+
+    // Clean up function
+    return () => {
+      if (autoSaveTimerRef.current) {
+        clearTimeout(autoSaveTimerRef.current);
+      }
+    };
+  }, [content, coverImage, scheduleAutoSave]);
 
   useEffect(() => {
     const fetchNote = async () => {
@@ -78,45 +145,38 @@ After saving the document you will get a link that you can share.
     fetchNote();
   }, [queryParamID, onInit]);
 
-  const saveDocument = useCallback(async () => {
+  // Handle save button click
+  const handleSave = async () => {
     try {
-      setIsSaving(true);
-      const isInitialSave = !queryParamID;
-      const noteId = queryParamID || uuidv4();
-      console.log("[API] Saving note", { id: noteId, cover_url: coverImage });
-      // Send POST request to the backend for saving the note
-      const response = await saveNote({
-        text: content,
-        cover_url: coverImage,
-        id: noteId,
-      });
-
-      // Update the URL and component state
-      const url = new URL(window.location.href);
-      url.searchParams.set("id", response.id);
-      window.history.pushState(null, "", url.toString());
-      setQueryParamID(response.id); // Update the component state with the new ID
-      setLastSaved(new Date());
+      setSaveState("saving");
+      await saveDocument();
       setHasUnsavedChanges(false);
-
-      // Only show the sharing modal on the initial save
-      if (isInitialSave) {
-        setShowSharingModal(true);
-      }
-
-      // Start auto-save timer
-      if (autosaveTimeout.current) clearTimeout(autosaveTimeout.current);
-      autosaveTimeout.current = setTimeout(() => {
-        if (hasUnsavedChanges) {
-          saveDocument();
-        }
-      }, 2000); // Auto-save after 2 seconds if there are changes
+      setSaveState("saved");
     } catch (err) {
       console.error(err);
-    } finally {
-      setIsSaving(false);
+      setSaveState("unsaved");
     }
-  }, [content, coverImage, queryParamID, hasUnsavedChanges]);
+  };
+
+  // Update save state when relevant states change
+  useEffect(() => {
+    if (isSaving) {
+      setSaveState("saving");
+    } else if (hasUnsavedChanges) {
+      setSaveState("unsaved");
+    } else if (lastSaved) {
+      setSaveState("saved");
+
+      // Show a brief visual confirmation that save was successful
+      const saveConfirmation = document.querySelector(".save-button");
+      if (saveConfirmation) {
+        saveConfirmation.classList.add("save-success-flash");
+        setTimeout(() => {
+          saveConfirmation.classList.remove("save-success-flash");
+        }, 1000);
+      }
+    }
+  }, [isSaving, hasUnsavedChanges, lastSaved]);
 
   return (
     <div className="min-h-full">
@@ -163,17 +223,23 @@ After saving the document you will get a link that you can share.
 
       <div className="fixed bottom-5 right-5 flex items-center space-x-4">
         <button
-          onClick={saveDocument}
-          disabled={isSaving || !hasUnsavedChanges}
-          className={`flex items-center space-x-2 rounded px-3 py-2 text-sm font-medium ${
-            hasUnsavedChanges
-              ? "bg-blue-600 text-white hover:bg-blue-700"
-              : "bg-green-500 text-white"
-          } focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500`}
+          onClick={handleSave}
+          disabled={saveState === "saving" || saveState === "saved"}
+          className={`save-button flex items-center space-x-2 rounded px-3 py-2 text-sm font-medium ${
+            saveState === "unsaved"
+              ? "bg-blue-600 text-white hover:bg-blue-700 cursor-pointer"
+              : saveState === "saving"
+              ? "bg-yellow-500 text-white cursor-wait"
+              : "bg-green-500 text-white cursor-default opacity-75"
+          } focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors duration-300`}
         >
           <FloppyDisk size={16} />
           <span>
-            {isSaving ? "Saving..." : hasUnsavedChanges ? "Save" : "Saved"}
+            {saveState === "saving"
+              ? "Saving..."
+              : saveState === "unsaved"
+              ? "Save"
+              : "Saved"}
           </span>
         </button>
       </div>

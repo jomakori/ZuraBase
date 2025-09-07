@@ -88,8 +88,12 @@ export const Router: React.FC = () => {
 
     // Add debugging for API endpoint
     try {
-      const { getApiBase } = require("./getApiBase");
-      console.log("[Router] API Base URL:", getApiBase());
+      // Use import.meta instead of require
+      import("./getApiBase").then(({ getApiBase }) => {
+        console.log("[Router] API Base URL:", getApiBase());
+      }).catch(apiErr => {
+        console.error("[Router] Error importing getApiBase:", apiErr);
+      });
     } catch (apiErr) {
       console.error("[Router] Error getting API base URL:", apiErr);
     }
