@@ -108,15 +108,19 @@ export async function addLane(
   plannerId: string,
   title: string,
   description: string,
-  position: number
+  position: number,
+  color?: string
 ): Promise<PlannerLane> {
-  console.log("[API] addLane", { plannerId, title, position });
+  console.log("[API] addLane", {
+    plannerId,
+    title,
+    description,
+    position,
+    color,
+  });
 
-  // Only include description if it's not a temporary planner
-  // This is a workaround for the backend issue with the description column
-  const payload = !plannerId.toString().startsWith("temp-")
-    ? { title, description, position }
-    : { title, position }; // Omit description for temporary planners
+  const payload: any = { title, description, position };
+  if (color) payload.color = color;
 
   const response = await fetch(`${getApiBase()}/planner/${plannerId}/lane`, {
     method: "POST",
@@ -135,10 +139,11 @@ export async function addLane(
         title: title,
         description: description || "",
         position: position,
+        color: color,
         cards: [],
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
-      };
+      } as PlannerLane;
     }
     throw new Error(await response.text());
   }
@@ -150,14 +155,19 @@ export async function updateLane(
   plannerId: string,
   laneId: string,
   title: string,
-  description: string
+  description: string,
+  color?: string
 ): Promise<PlannerLane> {
-  console.log("[API] updateLane", { plannerId, laneId, title });
+  console.log("[API] updateLane", {
+    plannerId,
+    laneId,
+    title,
+    description,
+    color,
+  });
 
-  // Only include description if it's not a temporary planner
-  const payload = !plannerId.toString().startsWith("temp-")
-    ? { title, description }
-    : { title }; // Omit description for temporary planners
+  const payload: any = { title, description };
+  if (color) payload.color = color;
 
   const response = await fetch(
     `${getApiBase()}/planner/${plannerId}/lane/${laneId}`,
@@ -168,29 +178,28 @@ export async function updateLane(
     }
   );
 
-  // For temporary planners, create a mock response instead of throwing an error
   if (!response.ok) {
     if (
       plannerId.toString().startsWith("temp-") ||
       laneId.toString().startsWith("temp-")
     ) {
       console.log("Creating mock updated lane for temporary planner");
-      // Return a mock updated lane for temporary planners
       return {
         id: laneId,
         planner_id: plannerId,
-        title: title,
+        title,
         description: description || "",
-        position: 0, // We don't know the position, so default to 0
+        color: color || "#E5E7EB",
+        position: 0,
         cards: [],
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
-      };
+      } as PlannerLane;
     }
     throw new Error(await response.text());
   }
 
-  return await response.json();
+  return (await response.json()) as PlannerLane;
 }
 
 export async function deleteLane(
@@ -212,13 +221,15 @@ export async function splitLane(
   laneId: string,
   newTitle: string,
   newDescription: string,
-  splitPosition: number
+  splitPosition: number,
+  newColor?: string // Add optional newColor parameter
 ): Promise<PlannerLane> {
   console.log("[API] splitLane", {
     plannerId,
     laneId,
     newTitle,
     splitPosition,
+    newColor,
   });
 
   // Only include new_description if it's not a temporary planner
@@ -228,10 +239,12 @@ export async function splitLane(
         new_title: newTitle,
         new_description: newDescription,
         split_position: splitPosition,
+        new_color: newColor,
       }
     : {
         new_title: newTitle,
         split_position: splitPosition,
+        new_color: newColor,
       };
 
   const response = await fetch(
@@ -257,6 +270,7 @@ export async function splitLane(
         title: newTitle,
         description: newDescription || "",
         position: splitPosition + 1, // Position after the split point
+        color: newColor,
         cards: [],
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
@@ -266,6 +280,21 @@ export async function splitLane(
   }
 
   return await response.json();
+}
+
+export async function getCard(cardId: string): Promise<PlannerCard> {
+  console.log("[API] getCard", { cardId });
+  const response = await fetch(`${getApiBase()}/planner/card/${cardId}`);
+  if (!response.ok) throw new Error(await response.text());
+  return await response.json();
+}
+
+export async function initializeTemplates(): Promise<void> {
+  console.log("[API] initializeTemplates");
+  const response = await fetch(`${getApiBase()}/planner/templates/init`, {
+    method: "POST",
+  });
+  if (!response.ok) throw new Error(await response.text());
 }
 
 export async function reorderLanes(
@@ -313,8 +342,7 @@ export async function addCard(
       return {
         id: `temp-card-${Date.now()}`,
         lane_id: laneId,
-        title: title,
-        content: content,
+        fields: { title, content },
         position: position,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
@@ -357,10 +385,11 @@ export async function updateCard(
         lane_id: laneId,
         title: title,
         content: content,
+        fields: { title, content },
         position: 0, // We don't know the position, so default to 0
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
-      };
+      } as PlannerCard;
     }
     throw new Error(await response.text());
   }
@@ -462,8 +491,7 @@ export async function moveCard(
       return {
         id: cardId,
         lane_id: newLaneId,
-        title: "Moved Card", // We don't know the title, so use a placeholder
-        content: "", // We don't know the content, so use empty string
+        fields: { title: "Moved Card", content: "" },
         position: newPosition,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),

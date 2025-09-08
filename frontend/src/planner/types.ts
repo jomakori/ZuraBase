@@ -28,6 +28,7 @@ export interface Planner {
   created_at: string;
   updated_at: string;
   lanes: PlannerLane[];
+  columns: PlannerColumn[];
 }
 
 /** Represents a lane in a planner */
@@ -38,17 +39,27 @@ export interface PlannerLane {
   title: string;
   description: string;
   position: number;
+  color?: string; // Optional color for the lane
   created_at: string;
   updated_at: string;
   cards: PlannerCard[];
+}
+
+export interface PlannerColumn {
+  id: string;
+  planner_id: string;
+  name: string;
+  type: string; // text, status, number, date, user
+  position: number;
+  created_at: string;
+  updated_at: string;
 }
 
 /** Represents a card in a lane */
 export interface PlannerCard {
   id: string;
   lane_id: string;
-  title: string;
-  content: string; // Markdown content
+  fields: Record<string, any>; // Dynamic fields instead of title/content
   position: number;
   created_at: string;
   updated_at: string;

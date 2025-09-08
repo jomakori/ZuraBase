@@ -1,6 +1,12 @@
 import React, { useState } from "react";
 import { PlannerCard } from "../types";
-import { Pencil, Trash, DotsSixVertical } from "@phosphor-icons/react";
+import {
+  Pencil,
+  Trash,
+  DotsSixVertical,
+  CaretDown,
+  CaretRight,
+} from "@phosphor-icons/react";
 import { MilkdownProvider } from "@milkdown/react";
 import MarkdownEditor from "../../components/MarkdownEditor";
 
@@ -8,7 +14,7 @@ interface CardProps {
   card: PlannerCard;
   onUpdate: (cardId: string, title: string, content: string) => void;
   onDelete: (cardId: string) => void;
-  dragHandleProps?: any;
+  dragHandleProps?: React.HTMLAttributes<HTMLDivElement>;
 }
 
 const Card: React.FC<CardProps> = ({
@@ -18,8 +24,9 @@ const Card: React.FC<CardProps> = ({
   dragHandleProps,
 }) => {
   const [isEditing, setIsEditing] = useState(false);
-  const [title, setTitle] = useState(card.title);
-  const [content, setContent] = useState(card.content);
+  const [isFolded, setIsFolded] = useState(true); // New state for folding
+  const [title, setTitle] = useState(card.fields?.title || "");
+  const [content, setContent] = useState(card.fields?.content || "");
 
   const handleSave = () => {
     onUpdate(card.id, title, content);
@@ -27,8 +34,8 @@ const Card: React.FC<CardProps> = ({
   };
 
   const handleCancel = () => {
-    setTitle(card.title);
-    setContent(card.content);
+    setTitle(card.fields?.title || "");
+    setContent(card.fields?.content || "");
     setIsEditing(false);
   };
 
@@ -37,7 +44,7 @@ const Card: React.FC<CardProps> = ({
     return (
       <div
         className="prose prose-sm max-w-none"
-        dangerouslySetInnerHTML={{ __html: card.content }}
+        dangerouslySetInnerHTML={{ __html: card.fields?.content || "" }}
       />
     );
   };
@@ -78,7 +85,18 @@ const Card: React.FC<CardProps> = ({
   return (
     <div className="bg-white p-3 rounded shadow mb-2 hover:shadow-md transition-shadow duration-200">
       <div className="flex justify-between items-start">
-        <h3 className="font-medium text-gray-900">{card.title}</h3>
+        <div className="flex items-center">
+          <button
+            onClick={() => setIsFolded(!isFolded)}
+            className="text-gray-500 hover:text-gray-700 mr-2"
+            aria-expanded={!isFolded}
+          >
+            {isFolded ? <CaretRight size={16} /> : <CaretDown size={16} />}
+          </button>
+          <h3 className="font-medium text-gray-900">
+            {card.fields?.title || "Untitled"}
+          </h3>
+        </div>
         <div className="flex space-x-1">
           <div {...dragHandleProps} className="cursor-grab">
             <DotsSixVertical size={16} />
@@ -97,7 +115,9 @@ const Card: React.FC<CardProps> = ({
           </button>
         </div>
       </div>
-      <div className="mt-2 text-sm text-gray-700">{renderMarkdown()}</div>
+      {!isFolded && (
+        <div className="mt-2 text-sm text-gray-700">{renderMarkdown()}</div>
+      )}
     </div>
   );
 };

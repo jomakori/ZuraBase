@@ -3,5 +3,10 @@ export default {
   theme: {
     extend: {},
   },
+  safelist: [
+    {
+      pattern: /border-(red|blue|green|purple|orange)-(500)/,
+    },
+  ],
   plugins: [require("@tailwindcss/typography")],
 };

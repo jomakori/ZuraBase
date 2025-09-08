@@ -15,37 +15,48 @@ import (
 
 // Planner represents a Markdown-based planning board
 type Planner struct {
-	ID          string       `json:"id"`
-	Title       string       `json:"title"`
-	Description string       `json:"description"` // Markdown content
-	TemplateID  string       `json:"template_id"`
-	CreatedAt   time.Time    `json:"created_at"`
-	UpdatedAt   time.Time    `json:"updated_at"`
-	Lanes       []PlannerLane `json:"lanes"`
+	ID          string          `json:"id" bson:"id"`
+	Title       string          `json:"title" bson:"title"`
+	Description string          `json:"description" bson:"description"`
+	TemplateID  string          `json:"template_id" bson:"template_id"`
+	CreatedAt   time.Time       `json:"created_at" bson:"created_at"`
+	UpdatedAt   time.Time       `json:"updated_at" bson:"updated_at"`
+	Lanes       []PlannerLane   `json:"lanes" bson:"lanes"`
+	Columns     []PlannerColumn `json:"columns" bson:"columns"`
 }
 
 // PlannerLane represents a lane in a planner
 type PlannerLane struct {
-	ID            string       `json:"id"`
-	PlannerID     string       `json:"planner_id"`
-	TemplateLaneID string      `json:"template_lane_id,omitempty"`
-	Title         string       `json:"title"`
-	Description   string       `json:"description"` // Markdown content
-	Position      int          `json:"position"`
-	CreatedAt     time.Time    `json:"created_at"`
-	UpdatedAt     time.Time    `json:"updated_at"`
-	Cards         []PlannerCard `json:"cards"`
+	ID             string        `json:"id" bson:"id"`
+	PlannerID      string        `json:"planner_id" bson:"planner_id"`
+	TemplateLaneID string        `json:"template_lane_id,omitempty" bson:"template_lane_id,omitempty"`
+	Title          string        `json:"title" bson:"title"`
+	Description    string        `json:"description" bson:"description"`
+	Color          string        `json:"color" bson:"color"`
+	Position       int           `json:"position" bson:"position"`
+	CreatedAt      time.Time     `json:"created_at" bson:"created_at"`
+	UpdatedAt      time.Time     `json:"updated_at" bson:"updated_at"`
+	Cards          []PlannerCard `json:"cards" bson:"cards"`
 }
 
 // PlannerCard represents a card in a lane with Markdown content
 type PlannerCard struct {
-	ID        string    `json:"id"`
-	LaneID    string    `json:"lane_id"`
-	Title     string    `json:"title"`
-	Content   string    `json:"content"` // Markdown content
-	Position  int       `json:"position"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID        string                 `json:"id" bson:"id"`
+	LaneID    string                 `json:"lane_id" bson:"lane_id"`
+	Fields    map[string]interface{} `json:"fields" bson:"fields"` // columnID -> value
+	Position  int                    `json:"position" bson:"position"`
+	CreatedAt time.Time              `json:"created_at" bson:"created_at"`
+	UpdatedAt time.Time              `json:"updated_at" bson:"updated_at"`
+}
+
+type PlannerColumn struct {
+	ID        string    `json:"id" bson:"id"`
+	PlannerID string    `json:"planner_id" bson:"planner_id"`
+	Name      string    `json:"name" bson:"name"`
+	Type      string    `json:"type" bson:"type"` // text, status, number, date, user
+	Position  int       `json:"position" bson:"position"`
+	CreatedAt time.Time `json:"created_at" bson:"created_at"`
+	UpdatedAt time.Time `json:"updated_at" bson:"updated_at"`
 }
 
 // Mongo collection for planners
@@ -79,38 +90,36 @@ func CreatePlanner(ctx context.Context, title, description, templateID string) (
 	return planner, nil
 }
 
-// GetPlanner retrieves a planner by ID with all its lanes and cards
-func GetPlanner(ctx context.Context, id string) (*Planner, error) {
-	// Minimal logging
-	log.Printf("Getting planner with id=%s", id)
-	
-	result := plannerCollection.FindOne(ctx, bson.M{"id": id})
-	if result.Err() != nil {
-		return nil, result.Err()
-	}
-	var planner Planner
-	if err := result.Decode(&planner); err != nil {
-		return nil, err
-	}
-	// Ensure Lanes and Cards slices are not nil
-	if planner.Lanes == nil {
-		planner.Lanes = []PlannerLane{}
-	} else {
-		for i := range planner.Lanes {
-			if planner.Lanes[i].Cards == nil {
-				log.Printf("GetPlanner: Fixing nil Cards for lane %s", planner.Lanes[i].ID)
-				planner.Lanes[i].Cards = []PlannerCard{}
-			}
-		}
-	}
-
-	log.Printf("GetPlanner: Returning planner with %d lanes", len(planner.Lanes))
-	for i, lane := range planner.Lanes {
-		log.Printf("GetPlanner: Lane %d: ID=%s, Cards=%v (len=%d)", i, lane.ID, lane.Cards, len(lane.Cards))
-	}
-
-	return &planner, nil
-}
+ // GetPlanner retrieves a planner by ID with all its lanes, cards, and columns
+ func GetPlanner(ctx context.Context, id string) (*Planner, error) {
+ 	log.Printf("Getting planner with id=%s", id)
+ 
+ 	result := plannerCollection.FindOne(ctx, bson.M{"id": id})
+ 	if result.Err() != nil {
+ 		return nil, result.Err()
+ 	}
+ 	var planner Planner
+ 	if err := result.Decode(&planner); err != nil {
+ 		return nil, err
+ 	}
+ 
+ 	// Ensure Lanes, Cards, and Columns slices are not nil
+ 	if planner.Lanes == nil {
+ 		planner.Lanes = []PlannerLane{}
+ 	} else {
+ 		for i := range planner.Lanes {
+ 			if planner.Lanes[i].Cards == nil {
+ 				planner.Lanes[i].Cards = []PlannerCard{}
+ 			}
+ 		}
+ 	}
+ 	if planner.Columns == nil {
+ 		planner.Columns = []PlannerColumn{}
+ 	}
+ 
+ 	log.Printf("GetPlanner: Returning planner with %d lanes and %d columns", len(planner.Lanes), len(planner.Columns))
+ 	return &planner, nil
+ }
 
 // UpdatePlanner updates a planner's title and description
 func UpdatePlanner(ctx context.Context, id, title, description string) (*Planner, error) {
@@ -159,8 +168,12 @@ func ExportPlannerMarkdown(ctx context.Context, id string) (string, error) {
 		
 		// Add cards
 		for _, card := range lane.Cards {
-			markdown += "### " + card.Title + "\n\n"
-			markdown += card.Content + "\n\n"
+			if title, ok := card.Fields["title"].(string); ok {
+				markdown += "### " + title + "\n\n"
+			}
+			if content, ok := card.Fields["content"].(string); ok {
+				markdown += content + "\n\n"
+			}
 		}
 	}
 	

@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Planner, PlannerLane } from "../types";
+import { Planner, PlannerLane, PlannerColumn, PlannerCard } from "../types";
 import Lane from "./Lane";
 import { Plus } from "@phosphor-icons/react";
 import {
@@ -18,12 +18,25 @@ import {
 interface BoardProps {
   planner: Planner;
   onPlannerUpdate: (planner: Planner) => void;
+  onSplitLane: (
+    laneId: string,
+    newTitle: string,
+    newDescription: string,
+    splitPosition: number,
+    newColor: string
+  ) => void;
 }
 
-const Board: React.FC<BoardProps> = ({ planner, onPlannerUpdate }) => {
+const Board: React.FC<BoardProps> = ({
+  planner,
+  onPlannerUpdate,
+  onSplitLane,
+}) => {
   const [isAddingLane, setIsAddingLane] = useState(false);
   const [newLaneTitle, setNewLaneTitle] = useState("");
   const [newLaneDescription, setNewLaneDescription] = useState("");
+
+  // Removed pendingSplit mechanism; handle splits directly
 
   const handleAddLane = async () => {
     if (newLaneTitle.trim()) {
@@ -54,14 +67,16 @@ const Board: React.FC<BoardProps> = ({ planner, onPlannerUpdate }) => {
   const handleUpdateLane = async (
     laneId: string,
     title: string,
-    description: string
+    description: string,
+    color?: string
   ) => {
     try {
       const updatedLane = await updateLane(
         planner.id,
         laneId,
         title,
-        description
+        description,
+        color
       );
 
       // Update the planner with the updated lane
@@ -100,7 +115,8 @@ const Board: React.FC<BoardProps> = ({ planner, onPlannerUpdate }) => {
     laneId: string,
     newTitle: string,
     newDescription: string,
-    splitPosition: number
+    splitPosition: number,
+    newColor: string
   ) => {
     try {
       const newLane = await splitLane(
@@ -108,27 +124,14 @@ const Board: React.FC<BoardProps> = ({ planner, onPlannerUpdate }) => {
         laneId,
         newTitle,
         newDescription,
-        splitPosition
+        splitPosition,
+        newColor
       );
-
-      // Find the lane that was split
-      const originalLane = planner.lanes.find((lane) => lane.id === laneId);
-      if (!originalLane) return;
-
-      // Create updated lanes with cards split between them
-      const updatedOriginalLane = {
-        ...originalLane,
-        cards: originalLane.cards.slice(0, splitPosition + 1),
-      };
-
-      // Update the planner with both lanes
       onPlannerUpdate({
         ...planner,
-        lanes: [
-          ...planner.lanes.filter((lane) => lane.id !== laneId),
-          updatedOriginalLane,
-          newLane,
-        ].sort((a, b) => a.position - b.position),
+        lanes: [...planner.lanes, newLane].sort(
+          (a, b) => a.position - b.position
+        ),
       });
     } catch (error) {
       console.error("Failed to split lane:", error);
@@ -142,6 +145,7 @@ const Board: React.FC<BoardProps> = ({ planner, onPlannerUpdate }) => {
     position: number
   ) => {
     try {
+      const fields = { title, content };
       const newCard = await addCard(
         planner.id,
         laneId,
@@ -157,7 +161,7 @@ const Board: React.FC<BoardProps> = ({ planner, onPlannerUpdate }) => {
           if (lane.id === laneId) {
             return {
               ...lane,
-              cards: [...lane.cards, newCard],
+              cards: [...lane.cards, { ...newCard, fields }],
             };
           }
           return lane;
@@ -189,6 +193,9 @@ const Board: React.FC<BoardProps> = ({ planner, onPlannerUpdate }) => {
         content
       );
 
+      // Attach updated fields into card
+      const fields = { title, content };
+
       // Update the planner with the updated card
       onPlannerUpdate({
         ...planner,
@@ -196,7 +203,7 @@ const Board: React.FC<BoardProps> = ({ planner, onPlannerUpdate }) => {
           const cardIndex = lane.cards.findIndex((card) => card.id === cardId);
           if (cardIndex >= 0) {
             const updatedCards = [...lane.cards];
-            updatedCards[cardIndex] = updatedCard;
+            updatedCards[cardIndex] = { ...updatedCard, fields };
             return {
               ...lane,
               cards: updatedCards,
@@ -236,22 +243,121 @@ const Board: React.FC<BoardProps> = ({ planner, onPlannerUpdate }) => {
     }
   };
 
+  const handleMoveCard = async (
+    cardId: string,
+    newLaneId: string,
+    newPosition: number
+  ) => {
+    try {
+      const movedCard = await moveCard(
+        planner.id,
+        cardId,
+        newLaneId,
+        newPosition
+      );
+
+      onPlannerUpdate({
+        ...planner,
+        lanes: planner.lanes.map((lane) => {
+          if (lane.id === newLaneId) {
+            return {
+              ...lane,
+              cards: [...lane.cards, movedCard],
+            };
+          }
+          return {
+            ...lane,
+            cards: lane.cards.filter((c) => c.id !== cardId),
+          };
+        }),
+      });
+    } catch (error) {
+      console.error("Failed to move card:", error);
+    }
+  };
+
   return (
-    <div className="h-full">
-      <div className="flex overflow-x-auto pb-4 h-full items-start">
+    <div className="h-full w-full overflow-x-auto">
+      <div
+        className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 pb-4 h-full items-start auto-rows-max"
+        onDragOver={(e) => e.preventDefault()}
+        onDrop={(e) => {
+          const draggedLaneId = e.dataTransfer.getData("laneId");
+          if (draggedLaneId) {
+            const newOrder = [...planner.lanes.map((l) => l.id)];
+            const targetIndex = Math.floor(
+              newOrder.length * (e.clientX / window.innerWidth)
+            );
+            newOrder.splice(newOrder.indexOf(draggedLaneId), 1);
+            newOrder.splice(targetIndex, 0, draggedLaneId);
+            reorderLanes(planner.id, newOrder);
+          }
+        }}
+      >
         {/* Lanes */}
-        {planner.lanes.map((lane) => (
-          <Lane
-            key={lane.id}
-            lane={lane}
-            onAddCard={handleAddCard}
-            onUpdateCard={handleUpdateCard}
-            onDeleteCard={handleDeleteCard}
-            onUpdateLane={handleUpdateLane}
-            onDeleteLane={handleDeleteLane}
-            onSplitLane={handleSplitLane}
-          />
-        ))}
+        {planner.lanes
+          .filter((lane) => !(lane as any).parentId)
+          .map((lane) => {
+            const childLanes = planner.lanes.filter(
+              (l) => (l as any).parentId === lane.id
+            );
+            return (
+              <div
+                key={lane.id}
+                draggable
+                onDragStart={(e) => e.dataTransfer.setData("laneId", lane.id)}
+                className="h-full"
+              >
+                <Lane
+                  lane={{
+                    ...lane,
+                    color:
+                      lane.color ||
+                      (lane.title.toLowerCase().includes("done")
+                        ? "#34D399"
+                        : lane.title.toLowerCase().includes("progress")
+                        ? "#FBBF24"
+                        : lane.title.toLowerCase().includes("stuck")
+                        ? "#F87171"
+                        : lane.title.toLowerCase().includes("live")
+                        ? "#60A5FA"
+                        : "#E5E7EB"),
+                  }}
+                  onAddCard={handleAddCard}
+                  onUpdateCard={handleUpdateCard}
+                  onDeleteCard={handleDeleteCard}
+                  onUpdateLane={handleUpdateLane}
+                  onDeleteLane={handleDeleteLane}
+                  onSplitLane={(laneId, newTitle, newDesc, pos, color) =>
+                    handleSplitLane(laneId, newTitle, newDesc, pos, color).then(
+                      (newLane) => {
+                        (newLane as any).parentId = lane.id;
+                      }
+                    )
+                  }
+                  onMoveCard={handleMoveCard}
+                />
+                {/* Render child lanes */}
+                {childLanes.length > 0 && (
+                  <div className="ml-4 mt-2 space-y-2">
+                    {childLanes.map((child) => (
+                      <Lane
+                        key={child.id}
+                        lane={child}
+                        onAddCard={handleAddCard}
+                        onUpdateCard={handleUpdateCard}
+                        onDeleteCard={handleDeleteCard}
+                        onUpdateLane={handleUpdateLane}
+                        onDeleteLane={handleDeleteLane}
+                        onSplitLane={handleSplitLane}
+                        onMoveCard={handleMoveCard}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
 
         {/* Add Lane Form */}
         {isAddingLane ? (

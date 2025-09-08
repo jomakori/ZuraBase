@@ -20,8 +20,10 @@ func AddCard(ctx context.Context, laneID, title, content string, position int) (
 	card := PlannerCard{
 		ID:        cardID,
 		LaneID:    laneID,
-		Title:     title,
-		Content:   content,
+		Fields: map[string]interface{}{
+			"title":   title,
+			"content": content,
+		},
 		Position:  position,
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
@@ -57,9 +59,9 @@ func UpdateCard(ctx context.Context, cardID, title, content string) (*PlannerCar
 
 	filter := bson.M{"lanes.cards.id": cardID}
 	update := bson.M{"$set": bson.M{
-		"lanes.$[].cards.$[elem].title":    title,
-		"lanes.$[].cards.$[elem].content":  content,
-		"lanes.$[].cards.$[elem].updated_at": time.Now(),
+		"lanes.$[].cards.$[elem].fields.title":   title,
+		"lanes.$[].cards.$[elem].fields.content": content,
+		"lanes.$[].cards.$[elem].updated_at":     time.Now(),
 	}}
 	arrayFilters := options.Update().SetArrayFilters(options.ArrayFilters{
 		Filters: []interface{}{bson.M{"elem.id": cardID}},
@@ -70,7 +72,18 @@ func UpdateCard(ctx context.Context, cardID, title, content string) (*PlannerCar
 		return nil, err
 	}
 
-	return GetCard(ctx, cardID)
+	// Re-fetch card to return
+	updated, err := GetCard(ctx, cardID)
+	if err != nil {
+		return nil, err
+	}
+	// Ensure updated fields include latest title/content
+	if updated.Fields == nil {
+		updated.Fields = map[string]interface{}{}
+	}
+	updated.Fields["title"] = title
+	updated.Fields["content"] = content
+	return updated, nil
 }
 
  // DeleteCard removes a card from a lane in MongoDB
@@ -121,6 +134,10 @@ func MoveCard(ctx context.Context, cardID, newLaneID string, newPosition int) (*
 	// Push card into new lane
 	card.LaneID = newLaneID
 	card.Position = newPosition
+	if card.Fields == nil {
+		card.Fields = map[string]interface{}{}
+	}
+	card.Fields["lane_id"] = newLaneID
 	card.UpdatedAt = time.Now()
 
 	_, err = plannerCollection.UpdateOne(
@@ -131,6 +148,13 @@ func MoveCard(ctx context.Context, cardID, newLaneID string, newPosition int) (*
 	if err != nil {
 		return nil, err
 	}
+	// Ensure fields map is initialized
+	if card.Fields == nil {
+		card.Fields = map[string]interface{}{}
+	}
+	card.Fields["lane_id"] = newLaneID
+	card.Fields["moved_at"] = time.Now().Format(time.RFC3339)
+
 	return &card, nil
 }
 
@@ -226,6 +250,11 @@ func HandleUpdateCard(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	// Wrap into fields
+	if request.Title == "" && request.Content == "" {
+		http.Error(w, "No fields provided", http.StatusBadRequest)
+		return
+	}
 	
 	card, err := UpdateCard(r.Context(), cardID, request.Title, request.Content)
 	if err != nil {
@@ -316,6 +345,7 @@ func HandleMoveCard(w http.ResponseWriter, r *http.Request) {
 	var request struct {
 		NewLaneID   string `json:"new_lane_id"`
 		NewPosition int    `json:"new_position"`
+		Fields      map[string]interface{} `json:"fields,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -323,6 +353,14 @@ func HandleMoveCard(w http.ResponseWriter, r *http.Request) {
 	}
 	
 	card, err := MoveCard(r.Context(), cardID, request.NewLaneID, request.NewPosition)
+	if err == nil && request.Fields != nil {
+		if card.Fields == nil {
+			card.Fields = map[string]interface{}{}
+		}
+		for k, v := range request.Fields {
+			card.Fields[k] = v
+		}
+	}
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

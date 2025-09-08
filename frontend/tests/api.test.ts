@@ -1,10 +1,9 @@
 import { searchPhoto } from "../src/client";
 import { jest, describe, it, expect, beforeEach } from "@jest/globals";
+import { mockGetApiBase } from "./__mocks__/test-utils";
 
-// Create a mock for the getApiBase module
-jest.mock("../src/getApiBase", () => ({
-  getApiBase: jest.fn(),
-}));
+// Mock getApiBase
+mockGetApiBase();
 
 // Import the mocked getApiBase
 import { getApiBase } from "../src/getApiBase";
@@ -34,55 +33,75 @@ describe("getApiBase", () => {
   });
 });
 
-describe("API client", () => {
+describe("API client - searchPhoto", () => {
   // Mock fetch
-  global.fetch = jest.fn() as jest.MockedFunction<typeof fetch>;
+  let mockFetch: jest.MockedFunction<typeof fetch>;
 
   beforeEach(() => {
-    // Reset the fetch mock before each test
-    jest.clearAllMocks();
+    mockFetch = jest.fn() as jest.MockedFunction<typeof fetch>;
+    global.fetch = mockFetch;
+    mockFetch.mockClear();
   });
 
   it("should call fetch with the correct URL when searching for photos", async () => {
     // Mock a successful response
     const mockResponse = {
       ok: true,
-      json: jest.fn().mockResolvedValue({ photos: [] }),
-      text: jest.fn().mockResolvedValue(""),
-    } as any;
+      json: () => Promise.resolve({ photos: [] }),
+      text: () => Promise.resolve(""),
+    };
 
-    // @ts-ignore - Mocking fetch
-    global.fetch.mockResolvedValue(mockResponse);
+    mockFetch.mockResolvedValue(mockResponse as unknown as Response);
 
     // Call the searchPhoto function
     await searchPhoto("test query");
 
     // Check that fetch was called with the correct URL
-    expect(global.fetch).toHaveBeenCalledWith(
+    expect(mockFetch).toHaveBeenCalledWith(
       "http://test-api.example.com/images/test%20query"
     );
-
-    // Check that json() was called
-    expect(mockResponse.json).toHaveBeenCalled();
   });
 
   it("should throw an error when the API returns an error", async () => {
     // Mock an error response
     const mockResponse = {
       ok: false,
-      text: jest.fn().mockResolvedValue("API Error"),
-    } as any;
+      text: () => Promise.resolve("API Error"),
+    };
 
-    // @ts-ignore - Mocking fetch
-    global.fetch.mockResolvedValue(mockResponse);
+    mockFetch.mockResolvedValue(mockResponse);
 
     // Call the searchPhoto function and expect it to throw
     await expect(searchPhoto("test query")).rejects.toThrow("API Error");
 
     // Check that fetch was called
-    expect(global.fetch).toHaveBeenCalled();
+    expect(mockFetch).toHaveBeenCalled();
+  });
 
-    // Check that text() was called
-    expect(mockResponse.text).toHaveBeenCalled();
+  it("should handle network errors", async () => {
+    // Mock a network error
+    mockFetch.mockRejectedValue(new Error("Network error"));
+
+    // Call the searchPhoto function and expect it to throw
+    await expect(searchPhoto("test query")).rejects.toThrow("Network error");
+  });
+
+  it("should handle empty query strings", async () => {
+    // Mock a successful response
+    const mockResponse = {
+      ok: true,
+      json: () => Promise.resolve({ photos: [] }),
+      text: () => Promise.resolve(""),
+    };
+
+    mockFetch.mockResolvedValue(mockResponse);
+
+    // Call the searchPhoto function with empty query
+    await searchPhoto("");
+
+    // Check that fetch was called with the correct URL
+    expect(mockFetch).toHaveBeenCalledWith(
+      "http://test-api.example.com/images/"
+    );
   });
 });

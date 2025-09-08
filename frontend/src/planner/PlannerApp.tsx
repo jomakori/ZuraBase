@@ -10,6 +10,7 @@ import {
   updatePlanner,
   exportPlannerMarkdown,
   addLane,
+  splitLane,
 } from "./api";
 import { PlannerTemplate, Planner, PlannerLane } from "./types";
 import SharingModal from "../components/SharingModal";
@@ -37,10 +38,8 @@ const PlannerApp: React.FC = () => {
   // Use the modular save handler
   const savePlannerWrapper = async (id: string | null, data: any) => {
     if (!id) {
-      // This is a new planner creation - handled separately
       return null;
     }
-
     return updatePlanner(id, data.title, data.description || "");
   };
 
@@ -97,6 +96,32 @@ const PlannerApp: React.FC = () => {
     fetchPlanner();
   }, [queryParamID]);
 
+  const handleSplitLane = async (
+    laneId: string,
+    newTitle: string,
+    newDescription: string,
+    splitPosition: number,
+    newColor: string
+  ) => {
+    if (!planner) return;
+    try {
+      const newLane = await splitLane(
+        planner.id,
+        laneId,
+        newTitle,
+        newDescription,
+        splitPosition,
+        newColor
+      );
+      const updatedLanes = [...planner.lanes];
+      updatedLanes.splice(splitPosition + 1, 0, newLane);
+      handlePlannerUpdate({ ...planner, lanes: updatedLanes });
+    } catch (error) {
+      console.error("Error splitting lane:", error);
+      setError("Failed to split lane.");
+    }
+  };
+
   // Helper function to create predefined lanes based on template type
   const createPredefinedLanes = async (planner: Planner) => {
     const template = templates.find((t) => t.id === planner.template_id);
@@ -104,6 +129,14 @@ const PlannerApp: React.FC = () => {
 
     // Create predefined lanes based on template type
     let lanes: PlannerLane[] = [];
+    const colors = ["red", "blue", "green", "purple", "orange"]; // Define a set of colors
+    let colorIndex = 0;
+
+    const getNextColor = () => {
+      const color = colors[colorIndex % colors.length];
+      colorIndex++;
+      return color;
+    };
 
     // For temporary planners, we'll create the lanes directly in memory
     // This avoids making API calls that will fail for temporary planners
@@ -119,6 +152,7 @@ const PlannerApp: React.FC = () => {
             title: "To Do",
             description: "Tasks that need to be done",
             position: 0,
+            color: getNextColor(),
             cards: [],
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
@@ -129,6 +163,7 @@ const PlannerApp: React.FC = () => {
             title: "In Progress",
             description: "Tasks currently being worked on",
             position: 1,
+            color: getNextColor(),
             cards: [],
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
@@ -139,6 +174,7 @@ const PlannerApp: React.FC = () => {
             title: "Done",
             description: "Completed tasks",
             position: 2,
+            color: getNextColor(),
             cards: [],
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
@@ -153,6 +189,7 @@ const PlannerApp: React.FC = () => {
             title: "Backlog",
             description: "Future tasks and features",
             position: 0,
+            color: getNextColor(),
             cards: [],
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
@@ -163,6 +200,7 @@ const PlannerApp: React.FC = () => {
             title: "Sprint",
             description: "Tasks for current sprint",
             position: 1,
+            color: getNextColor(),
             cards: [],
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
@@ -173,6 +211,7 @@ const PlannerApp: React.FC = () => {
             title: "In Progress",
             description: "Tasks currently being worked on",
             position: 2,
+            color: getNextColor(),
             cards: [],
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
@@ -183,6 +222,7 @@ const PlannerApp: React.FC = () => {
             title: "Testing",
             description: "Tasks being tested",
             position: 3,
+            color: getNextColor(),
             cards: [],
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
@@ -193,6 +233,7 @@ const PlannerApp: React.FC = () => {
             title: "Done",
             description: "Completed tasks",
             position: 4,
+            color: getNextColor(),
             cards: [],
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
@@ -208,19 +249,22 @@ const PlannerApp: React.FC = () => {
             planner.id,
             "To Do",
             "Tasks that need to be done",
-            0
+            0,
+            getNextColor()
           );
           const inProgressLane = await addLane(
             planner.id,
             "In Progress",
             "Tasks currently being worked on",
-            1
+            1,
+            getNextColor()
           );
           const doneLane = await addLane(
             planner.id,
             "Done",
             "Completed tasks",
-            2
+            2,
+            getNextColor()
           );
 
           lanes = [todoLane, inProgressLane, doneLane];
@@ -234,31 +278,36 @@ const PlannerApp: React.FC = () => {
             planner.id,
             "Backlog",
             "Future tasks and features",
-            0
+            0,
+            getNextColor()
           );
           const sprintLane = await addLane(
             planner.id,
             "Sprint",
             "Tasks for current sprint",
-            1
+            1,
+            getNextColor()
           );
           const inProgressLane = await addLane(
             planner.id,
             "In Progress",
             "Tasks currently being worked on",
-            2
+            2,
+            getNextColor()
           );
           const testingLane = await addLane(
             planner.id,
             "Testing",
             "Tasks being tested",
-            3
+            3,
+            getNextColor()
           );
           const doneLane = await addLane(
             planner.id,
             "Done",
             "Completed tasks",
-            4
+            4,
+            getNextColor()
           );
 
           lanes = [
@@ -303,6 +352,7 @@ const PlannerApp: React.FC = () => {
         description: description,
         template_id: templateId,
         lanes: [],
+        columns: [],
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       };
@@ -429,7 +479,7 @@ const PlannerApp: React.FC = () => {
 
     try {
       setSaveState("saving");
-      await saveDocument();
+      await saveDocument(true);
       setHasUnsavedChanges(false);
       setSaveState("saved");
     } catch (error) {
@@ -567,7 +617,11 @@ const PlannerApp: React.FC = () => {
                 </p>
               </div>
             )}
-            <Board planner={planner} onPlannerUpdate={handlePlannerUpdate} />
+            <Board
+              planner={planner}
+              onPlannerUpdate={handlePlannerUpdate}
+              onSplitLane={handleSplitLane}
+            />
           </div>
         ) : (
           <div className="text-center py-12">
