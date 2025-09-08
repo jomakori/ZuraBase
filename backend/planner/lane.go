@@ -26,6 +26,11 @@ func AddLane(ctx context.Context, plannerID, title, description string, position
 		UpdatedAt:   time.Now(),
 		Cards:       []PlannerCard{},
 	}
+	if lane.Cards == nil {
+		lane.Cards = []PlannerCard{}
+	}
+
+	log.Printf("AddLane: Pushing lane with ID=%s, Cards=%v (len=%d)", laneID, lane.Cards, len(lane.Cards))
 
 	// push lane into planner document
 	_, err := plannerCollection.UpdateOne(
@@ -37,6 +42,7 @@ func AddLane(ctx context.Context, plannerID, title, description string, position
 		return nil, err
 	}
 
+	log.Printf("AddLane: Successfully added lane %s to planner %s", laneID, plannerID)
 	return &lane, nil
 }
 
@@ -62,6 +68,7 @@ func UpdateLane(ctx context.Context, laneID, title, description string) (*Planne
 		Title:       title,
 		Description: description,
 		UpdatedAt:   time.Now(),
+		Cards:       []PlannerCard{},
 	}
 	return updatedLane, nil
 }
@@ -110,6 +117,9 @@ func SplitLane(ctx context.Context, laneID, newTitle, newDescription string, spl
 		UpdatedAt:   time.Now(),
 		Cards:       []PlannerCard{},
 	}
+	if newLane.Cards == nil {
+		newLane.Cards = []PlannerCard{}
+	}
 
 	// Push new lane into planner document containing laneID
 	_, err := plannerCollection.UpdateOne(
@@ -155,7 +165,9 @@ func HandleAddLane(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	
+
+	log.Printf("HandleAddLane: Returning lane with ID=%s, Cards=%v (len=%d)", lane.ID, lane.Cards, len(lane.Cards))
+
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(lane); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)

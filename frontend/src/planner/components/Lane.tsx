@@ -62,7 +62,7 @@ const Lane: React.FC<LaneProps> = ({
         lane.id,
         newCardTitle,
         newCardContent,
-        lane.cards.length // Add to the end of the lane
+        lane.cards?.length ?? 0 // Add to the end of the lane
       );
       setNewCardTitle("");
       setNewCardContent("");
@@ -175,11 +175,11 @@ const Lane: React.FC<LaneProps> = ({
               onChange={(e) => setSplitPosition(parseInt(e.target.value))}
               className="w-full p-1 border border-gray-300 rounded"
             >
-              {lane.cards.map((card, index) => (
+              {lane.cards?.map((card, index) => (
                 <option key={card.id} value={index}>
                   {index + 1}. {card.title}
                 </option>
-              ))}
+              )) ?? []}
             </select>
           </div>
           <div className="flex justify-end space-x-2">
@@ -201,14 +201,14 @@ const Lane: React.FC<LaneProps> = ({
 
       {/* Cards Container */}
       <div className="overflow-y-auto flex-1">
-        {lane.cards.map((card) => (
+        {lane.cards?.map((card) => (
           <Card
             key={card.id}
             card={card}
             onUpdate={onUpdateCard}
             onDelete={onDeleteCard}
           />
-        ))}
+        )) ?? []}
       </div>
 
       {/* Add Card Form */}

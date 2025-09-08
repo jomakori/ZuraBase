@@ -21,7 +21,7 @@ type Planner struct {
 	TemplateID  string       `json:"template_id"`
 	CreatedAt   time.Time    `json:"created_at"`
 	UpdatedAt   time.Time    `json:"updated_at"`
-	Lanes       []PlannerLane `json:"lanes,omitempty"`
+	Lanes       []PlannerLane `json:"lanes"`
 }
 
 // PlannerLane represents a lane in a planner
@@ -34,7 +34,7 @@ type PlannerLane struct {
 	Position      int          `json:"position"`
 	CreatedAt     time.Time    `json:"created_at"`
 	UpdatedAt     time.Time    `json:"updated_at"`
-	Cards         []PlannerCard `json:"cards,omitempty"`
+	Cards         []PlannerCard `json:"cards"`
 }
 
 // PlannerCard represents a card in a lane with Markdown content
@@ -92,6 +92,23 @@ func GetPlanner(ctx context.Context, id string) (*Planner, error) {
 	if err := result.Decode(&planner); err != nil {
 		return nil, err
 	}
+	// Ensure Lanes and Cards slices are not nil
+	if planner.Lanes == nil {
+		planner.Lanes = []PlannerLane{}
+	} else {
+		for i := range planner.Lanes {
+			if planner.Lanes[i].Cards == nil {
+				log.Printf("GetPlanner: Fixing nil Cards for lane %s", planner.Lanes[i].ID)
+				planner.Lanes[i].Cards = []PlannerCard{}
+			}
+		}
+	}
+
+	log.Printf("GetPlanner: Returning planner with %d lanes", len(planner.Lanes))
+	for i, lane := range planner.Lanes {
+		log.Printf("GetPlanner: Lane %d: ID=%s, Cards=%v (len=%d)", i, lane.ID, lane.Cards, len(lane.Cards))
+	}
+
 	return &planner, nil
 }
 

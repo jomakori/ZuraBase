@@ -4,35 +4,8 @@ import ReactDOM from "react-dom/client";
 import App from "./components/App";
 import { NotesApp } from "./notes";
 import { PlannerApp } from "./planner";
+import ErrorBoundary from "./components/ErrorBoundary";
 import "./index.css";
-
-// Fallback component to display when there's an error
-const ErrorFallback = ({ error }: { error: Error }) => {
-  return (
-    <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-      <div className="max-w-md w-full bg-white shadow-lg rounded-lg p-6">
-        <h2 className="text-2xl font-bold text-red-600 mb-4">
-          Application Error
-        </h2>
-        <div className="bg-red-50 border border-red-200 rounded p-4 mb-4">
-          <p className="text-red-800 font-medium">{error.message}</p>
-        </div>
-        <p className="mb-4 text-gray-600">This could be due to:</p>
-        <ul className="list-disc pl-5 mb-4 text-gray-600">
-          <li>Missing environment variables</li>
-          <li>Backend service not running</li>
-          <li>Network connectivity issues</li>
-        </ul>
-        <button
-          onClick={() => window.location.reload()}
-          className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded"
-        >
-          Reload Application
-        </button>
-      </div>
-    </div>
-  );
-};
 
 // Simple router component that renders different components based on the URL path
 export const Router: React.FC = () => {
@@ -77,41 +50,42 @@ export const Router: React.FC = () => {
     };
   }, [path]);
 
-  // Error boundary
-  if (error) {
-    return <ErrorFallback error={error} />;
+  // Render the appropriate component based on the path
+  console.log("[Router] Rendering component for path:", path);
+
+  // Add debugging for API endpoint
+  try {
+    // Use import.meta instead of require
+    import("./getApiBase").then(({ getApiBase }) => {
+      console.log("[Router] API Base URL:", getApiBase());
+    }).catch(apiErr => {
+      console.error("[Router] Error importing getApiBase:", apiErr);
+    });
+  } catch (apiErr) {
+    console.error("[Router] Error getting API base URL:", apiErr);
   }
 
-  try {
-    // Render the appropriate component based on the path
-    console.log("[Router] Rendering component for path:", path);
-
-    // Add debugging for API endpoint
-    try {
-      // Use import.meta instead of require
-      import("./getApiBase").then(({ getApiBase }) => {
-        console.log("[Router] API Base URL:", getApiBase());
-      }).catch(apiErr => {
-        console.error("[Router] Error importing getApiBase:", apiErr);
-      });
-    } catch (apiErr) {
-      console.error("[Router] Error getting API base URL:", apiErr);
-    }
-
-    if (path.startsWith("/notes")) {
-      console.log("[Router] Rendering NotesApp");
-      return <NotesApp />;
-    } else if (path.startsWith("/planner")) {
-      console.log("[Router] Rendering PlannerApp");
-      return <PlannerApp />;
-    } else {
-      console.log("[Router] Rendering App");
-      return <App />;
-    }
-  } catch (err) {
-    console.error("[Router] Error rendering component:", err);
-    setError(err as Error);
-    return null;
+  if (path.startsWith("/notes")) {
+    console.log("[Router] Rendering NotesApp");
+    return (
+      <ErrorBoundary>
+        <NotesApp />
+      </ErrorBoundary>
+    );
+  } else if (path.startsWith("/planner")) {
+    console.log("[Router] Rendering PlannerApp");
+    return (
+      <ErrorBoundary>
+        <PlannerApp />
+      </ErrorBoundary>
+    );
+  } else {
+    console.log("[Router] Rendering App");
+    return (
+      <ErrorBoundary>
+        <App />
+      </ErrorBoundary>
+    );
   }
 };
 
