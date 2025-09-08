@@ -1,4 +1,4 @@
-# Use the official Node.js image as the base image
+# Use the official Node.js LTS Alpine image as the base
 FROM node:alpine
 
 # Install curl for healthchecks
@@ -8,20 +8,15 @@ RUN apk add --no-cache curl
 WORKDIR /app
 
 # Copy package.json and package-lock.json first to leverage Docker cache
-COPY package.json package-lock.json ./
+COPY package*.json ./
 
-# Install the dependencies for the target platform (linux/amd64)
-RUN npm install --platform=linux --arch=x64
+# Install dependencies in clean, reproducible way
+RUN npm ci
 
 # Copy the rest of the frontend content
 COPY . .
 
-# Clean node_modules and reinstall for the correct platform (linux/amd64)
-RUN rm -rf node_modules && \
-    npm ci --platform=linux --arch=x64 && \
-    npm rebuild
-
-# Start Vite dev server in development, Express in production
+# Define environment
 ARG NODE_ENV=production
 ENV NODE_ENV=${NODE_ENV}
 
@@ -29,4 +24,5 @@ ENV NODE_ENV=${NODE_ENV}
 EXPOSE 5173
 EXPOSE 8181
 
+# Start Vite dev server in development, Express in production
 CMD ["/bin/sh", "-c", "if [ \"$NODE_ENV\" = \"development\" ]; then npm run dev; else npm run build && node server.js; fi"]

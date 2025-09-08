@@ -2,13 +2,15 @@ package planner
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"strings"
 	"time"
+
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/mongo"
 )
 
 // Planner represents a Markdown-based planning board
@@ -46,98 +48,35 @@ type PlannerCard struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-var db *sql.DB
+// Mongo collection for planners
+var plannerCollection *mongo.Collection
 
-// Initialize sets up the database connection for the planner package
-func Initialize(database *sql.DB) {
-	db = database
+// Initialize sets up the MongoDB collection for the planner package
+func Initialize(client *mongo.Client, dbName string) {
+	plannerCollection = client.Database(dbName).Collection("planners")
 }
 
-// CreatePlanner creates a new planner based on a template
+// CreatePlanner creates a new planner document in MongoDB
 func CreatePlanner(ctx context.Context, title, description, templateID string) (*Planner, error) {
-	// Generate a new ID for the planner
 	plannerID := generateID()
-	
-	// Log minimal information
-	log.Printf("Creating new planner with templateID=%s", templateID)
-	
-	// Start a transaction
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback()
-	
-	// Create the planner
-	_, err = tx.ExecContext(ctx, `
-		INSERT INTO planner (id, title, description, template_id, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-	`, plannerID, title, description, templateID)
-	if err != nil {
-		return nil, err
-	}
-	
-	// Get the template lanes
-	rows, err := tx.QueryContext(ctx, `
-		SELECT id, name, description, position
-		FROM planner_template_lane
-		WHERE template_id = $1
-		ORDER BY position
-	`, templateID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	
-	// Create lanes for the planner based on the template
-	var lanes []PlannerLane
-	for rows.Next() {
-		var templateLaneID, name, description string
-		var position int
-		
-		err := rows.Scan(&templateLaneID, &name, &description, &position)
-		if err != nil {
-			return nil, err
-		}
-		
-		laneID := generateID()
-		
-		_, err = tx.ExecContext(ctx, `
-			INSERT INTO planner_lane (id, planner_id, template_lane_id, title, description, position, created_at, updated_at)
-			VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-		`, laneID, plannerID, templateLaneID, name, description, position)
-		if err != nil {
-			return nil, err
-		}
-		
-		lanes = append(lanes, PlannerLane{
-			ID:            laneID,
-			PlannerID:     plannerID,
-			TemplateLaneID: templateLaneID,
-			Title:         name,
-			Description:   description,
-			Position:      position,
-			CreatedAt:     time.Now(),
-			UpdatedAt:     time.Now(),
-			Cards:         []PlannerCard{},
-		})
-	}
-	
-	// Commit the transaction
-	if err := tx.Commit(); err != nil {
-		return nil, err
-	}
-	
-	// Return the created planner with lanes
-	return &Planner{
+	now := time.Now()
+
+	planner := &Planner{
 		ID:          plannerID,
 		Title:       title,
 		Description: description,
 		TemplateID:  templateID,
-		CreatedAt:   time.Now(),
-		UpdatedAt:   time.Now(),
-		Lanes:       lanes,
-	}, nil
+		CreatedAt:   now,
+		UpdatedAt:   now,
+		Lanes:       []PlannerLane{},
+	}
+
+	_, err := plannerCollection.InsertOne(ctx, planner)
+	if err != nil {
+		return nil, fmt.Errorf("failed to insert planner: %w", err)
+	}
+
+	return planner, nil
 }
 
 // GetPlanner retrieves a planner by ID with all its lanes and cards
@@ -145,98 +84,36 @@ func GetPlanner(ctx context.Context, id string) (*Planner, error) {
 	// Minimal logging
 	log.Printf("Getting planner with id=%s", id)
 	
-	// Get the planner
-	planner := &Planner{ID: id}
-	err := db.QueryRowContext(ctx, `
-		SELECT title, description, template_id, created_at, updated_at
-		FROM planner
-		WHERE id = $1
-	`, id).Scan(&planner.Title, &planner.Description, &planner.TemplateID, &planner.CreatedAt, &planner.UpdatedAt)
-	if err != nil {
+	result := plannerCollection.FindOne(ctx, bson.M{"id": id})
+	if result.Err() != nil {
+		return nil, result.Err()
+	}
+	var planner Planner
+	if err := result.Decode(&planner); err != nil {
 		return nil, err
 	}
-	
-	// Get the lanes
-	rows, err := db.QueryContext(ctx, `
-		SELECT id, template_lane_id, title, description, position, created_at, updated_at
-		FROM planner_lane
-		WHERE planner_id = $1
-		ORDER BY position
-	`, id)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	
-	var lanes []PlannerLane
-	for rows.Next() {
-		var lane PlannerLane
-		var templateLaneID sql.NullString
-		
-		err := rows.Scan(&lane.ID, &templateLaneID, &lane.Title, &lane.Description, &lane.Position, &lane.CreatedAt, &lane.UpdatedAt)
-		if err != nil {
-			return nil, err
-		}
-		
-		lane.PlannerID = id
-		if templateLaneID.Valid {
-			lane.TemplateLaneID = templateLaneID.String
-		}
-		
-		// Get the cards for this lane
-		cardRows, err := db.QueryContext(ctx, `
-			SELECT id, title, content, position, created_at, updated_at
-			FROM planner_card
-			WHERE lane_id = $1
-			ORDER BY position
-		`, lane.ID)
-		if err != nil {
-			return nil, err
-		}
-		
-		var cards []PlannerCard
-		for cardRows.Next() {
-			var card PlannerCard
-			
-			err := cardRows.Scan(&card.ID, &card.Title, &card.Content, &card.Position, &card.CreatedAt, &card.UpdatedAt)
-			if err != nil {
-				cardRows.Close()
-				return nil, err
-			}
-			
-			card.LaneID = lane.ID
-			cards = append(cards, card)
-		}
-		cardRows.Close()
-		
-		lane.Cards = cards
-		lanes = append(lanes, lane)
-	}
-	
-	planner.Lanes = lanes
-	return planner, nil
+	return &planner, nil
 }
 
 // UpdatePlanner updates a planner's title and description
 func UpdatePlanner(ctx context.Context, id, title, description string) (*Planner, error) {
 	log.Printf("Updating planner with id=%s", id)
-	
-	_, err := db.ExecContext(ctx, `
-		UPDATE planner
-		SET title = $1, description = $2, updated_at = CURRENT_TIMESTAMP
-		WHERE id = $3
-	`, title, description, id)
+
+	filter := bson.M{"id": id}
+	update := bson.M{"$set": bson.M{"title": title, "description": description, "updated_at": time.Now()}}
+
+	_, err := plannerCollection.UpdateOne(ctx, filter, update)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	return GetPlanner(ctx, id)
 }
 
-// DeletePlanner deletes a planner and all its lanes and cards
+	// DeletePlanner deletes a planner and all its lanes and cards
 func DeletePlanner(ctx context.Context, id string) error {
 	log.Printf("Deleting planner with id=%s", id)
-	_, err := db.ExecContext(ctx, `DELETE FROM planner WHERE id = $1`, id)
+	_, err := plannerCollection.DeleteOne(ctx, bson.M{"id": id})
 	return err
 }
 
@@ -307,7 +184,9 @@ func HandleCreatePlanner(w http.ResponseWriter, r *http.Request) {
 	
 	planner, err := CreatePlanner(r.Context(), request.Title, request.Description, request.TemplateID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		// Log detailed error for server-side diagnosis
+		log.Printf("[ERROR] Failed to create planner (title=%s, templateID=%s): %v", request.Title, request.TemplateID, err)
+		http.Error(w, fmt.Sprintf("Failed to create planner: %v", err), http.StatusInternalServerError)
 		return
 	}
 	

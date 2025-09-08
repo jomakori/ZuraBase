@@ -9,12 +9,12 @@ x-doppler: &doppler-env
 # Run app + dependent services
 services:
   backend:
-    <<: *doppler-env            ## injects doppler secrets
+    <<: *doppler-env ## injects doppler secrets
     image: zurabase:backend
     build:
       context: backend
       dockerfile: Dockerfile
-    platform: linux/amd64           # run/build as amd64
+    platform: linux/amd64 # run/build as amd64
     ports:
       - 8080:8080
     command: ["./main"]
@@ -28,12 +28,12 @@ services:
       retries: 5
 
   frontend:
-    <<: *doppler-env            ## injects doppler secrets
+    <<: *doppler-env ## injects doppler secrets
     image: zurabase:frontend
     build:
       context: ./frontend
       dockerfile: Dockerfile
-    platform: linux/amd64           # run/build as amd64
+    platform: linux/amd64 # run/build as amd64
     ports:
       - 5173:5173
       - 8181:8181
@@ -47,15 +47,15 @@ services:
       retries: 5
 
   db:
-    <<: *doppler-env            ## injects doppler secrets
-    image: postgres:alpine
-    platform: linux/amd64           # run as amd64
+    <<: *doppler-env ## injects doppler secrets
+    image: mongo:8.0
+    platform: linux/amd64 # run as amd64
     ports:
-      - 5432:5432
+      - 27017:27017
     volumes:
-      - db_data:/var/lib/postgresql/data
+      - db_data:/data/db
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
       interval: 5s
       timeout: 2s
       retries: 5
@@ -66,7 +66,7 @@ services:
     build:
       context: backend
       dockerfile: Dockerfile
-    platform: linux/amd64           # run/build as amd64
+    platform: linux/amd64 # run/build as amd64
     depends_on:
       backend:
         condition: service_healthy

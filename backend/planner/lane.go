@@ -7,33 +7,16 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"go.mongodb.org/mongo-driver/bson"
 )
 
-// AddLane adds a new lane to a planner
+// AddLane adds a new lane to a planner document in MongoDB
 func AddLane(ctx context.Context, plannerID, title, description string, position int) (*PlannerLane, error) {
 	log.Printf("Adding lane: plannerID=%s, title=%s, position=%d", plannerID, title, position)
-	
+
 	laneID := generateID()
-	
-	_, err := db.ExecContext(ctx, `
-		INSERT INTO planner_lane (id, planner_id, title, description, position, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-	`, laneID, plannerID, title, description, position)
-	if err != nil {
-		return nil, err
-	}
-	
-	// Update the positions of other lanes
-	_, err = db.ExecContext(ctx, `
-		UPDATE planner_lane
-		SET position = position + 1, updated_at = CURRENT_TIMESTAMP
-		WHERE planner_id = $1 AND position >= $2 AND id != $3
-	`, plannerID, position, laneID)
-	if err != nil {
-		return nil, err
-	}
-	
-	return &PlannerLane{
+	lane := PlannerLane{
 		ID:          laneID,
 		PlannerID:   plannerID,
 		Title:       title,
@@ -42,194 +25,103 @@ func AddLane(ctx context.Context, plannerID, title, description string, position
 		CreatedAt:   time.Now(),
 		UpdatedAt:   time.Now(),
 		Cards:       []PlannerCard{},
-	}, nil
+	}
+
+	// push lane into planner document
+	_, err := plannerCollection.UpdateOne(
+		ctx,
+		bson.M{"id": plannerID},
+		bson.M{"$push": bson.M{"lanes": lane}},
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return &lane, nil
 }
 
-// UpdateLane updates a lane's title and description
+ // UpdateLane updates a lane's title and description in MongoDB
 func UpdateLane(ctx context.Context, laneID, title, description string) (*PlannerLane, error) {
 	log.Printf("Updating lane: id=%s, title=%s", laneID, title)
-	
-	_, err := db.ExecContext(ctx, `
-		UPDATE planner_lane
-		SET title = $1, description = $2, updated_at = CURRENT_TIMESTAMP
-		WHERE id = $3
-	`, title, description, laneID)
+
+	filter := bson.M{"lanes.id": laneID}
+	update := bson.M{"$set": bson.M{
+		"lanes.$.title":       title,
+		"lanes.$.description": description,
+		"lanes.$.updated_at":  time.Now(),
+	}}
+
+	_, err := plannerCollection.UpdateOne(ctx, filter, update)
 	if err != nil {
 		return nil, err
 	}
-	
-	var plannerID string
-	var position int
-	var createdAt, updatedAt time.Time
-	
-	err = db.QueryRowContext(ctx, `
-		SELECT planner_id, position, created_at, updated_at
-		FROM planner_lane
-		WHERE id = $1
-	`, laneID).Scan(&plannerID, &position, &createdAt, &updatedAt)
-	if err != nil {
-		return nil, err
-	}
-	
-	return &PlannerLane{
+
+	// Return updated lane object (minimal)
+	updatedLane := &PlannerLane{
 		ID:          laneID,
-		PlannerID:   plannerID,
 		Title:       title,
 		Description: description,
-		Position:    position,
-		CreatedAt:   createdAt,
-		UpdatedAt:   updatedAt,
-		Cards:       []PlannerCard{},
-	}, nil
+		UpdatedAt:   time.Now(),
+	}
+	return updatedLane, nil
 }
 
-// DeleteLane deletes a lane and all its cards
+ // DeleteLane deletes a lane and all its cards in MongoDB
 func DeleteLane(ctx context.Context, laneID string) error {
 	log.Printf("Deleting lane: id=%s", laneID)
-	
-	// Get the planner ID and position of the lane
-	var plannerID string
-	var position int
-	err := db.QueryRowContext(ctx, `
-		SELECT planner_id, position
-		FROM planner_lane
-		WHERE id = $1
-	`, laneID).Scan(&plannerID, &position)
-	if err != nil {
-		return err
-	}
-	
-	// Start a transaction
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	
-	// Delete the lane
-	_, err = tx.ExecContext(ctx, `DELETE FROM planner_lane WHERE id = $1`, laneID)
-	if err != nil {
-		return err
-	}
-	
-	// Update the positions of other lanes
-	_, err = tx.ExecContext(ctx, `
-		UPDATE planner_lane
-		SET position = position - 1, updated_at = CURRENT_TIMESTAMP
-		WHERE planner_id = $1 AND position > $2
-	`, plannerID, position)
-	if err != nil {
-		return err
-	}
-	
-	// Commit the transaction
-	return tx.Commit()
+
+	// Pull lane from array
+	_, err := plannerCollection.UpdateOne(
+		ctx,
+		bson.M{"lanes.id": laneID},
+		bson.M{"$pull": bson.M{"lanes": bson.M{"id": laneID}}},
+	)
+	return err
 }
 
-// ReorderLanes updates the positions of lanes in a planner
+ // ReorderLanes updates the positions of lanes in a planner
 func ReorderLanes(ctx context.Context, plannerID string, laneIDs []string) error {
 	log.Printf("Reordering lanes: plannerID=%s, laneCount=%d", plannerID, len(laneIDs))
-	
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	
+
 	for i, laneID := range laneIDs {
-		_, err := tx.ExecContext(ctx, `
-			UPDATE planner_lane
-			SET position = $1, updated_at = CURRENT_TIMESTAMP
-			WHERE id = $2 AND planner_id = $3
-		`, i+1, laneID, plannerID)
+		filter := bson.M{"id": plannerID, "lanes.id": laneID}
+		update := bson.M{"$set": bson.M{"lanes.$.position": i + 1, "lanes.$.updated_at": time.Now()}}
+		_, err := plannerCollection.UpdateOne(ctx, filter, update)
 		if err != nil {
 			return err
 		}
 	}
-	
-	return tx.Commit()
+
+	return nil
 }
 
-// SplitLane splits a lane into two lanes
+ // SplitLane splits a lane into two lanes in MongoDB
 func SplitLane(ctx context.Context, laneID, newTitle, newDescription string, splitPosition int) (*PlannerLane, error) {
 	log.Printf("Splitting lane: id=%s, newTitle=%s, splitPosition=%d", laneID, newTitle, splitPosition)
-	
-	// Get the lane to split
-	var plannerID, title, description string
-	var position int
-	
-	err := db.QueryRowContext(ctx, `
-		SELECT planner_id, title, description, position
-		FROM planner_lane
-		WHERE id = $1
-	`, laneID).Scan(&plannerID, &title, &description, &position)
-	if err != nil {
-		return nil, err
-	}
-	
-	// Start a transaction
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback()
-	
-	// Create the new lane
+
+	// Construct new lane
 	newLaneID := generateID()
-	_, err = tx.ExecContext(ctx, `
-		INSERT INTO planner_lane (id, planner_id, title, description, position, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-	`, newLaneID, plannerID, newTitle, newDescription, position+1)
-	if err != nil {
-		return nil, err
-	}
-	
-	// Update positions of other lanes
-	_, err = tx.ExecContext(ctx, `
-		UPDATE planner_lane
-		SET position = position + 1, updated_at = CURRENT_TIMESTAMP
-		WHERE planner_id = $1 AND position > $2 AND id != $3
-	`, plannerID, position, newLaneID)
-	if err != nil {
-		return nil, err
-	}
-	
-	// Move cards after the split position to the new lane
-	_, err = tx.ExecContext(ctx, `
-		UPDATE planner_card
-		SET lane_id = $1, updated_at = CURRENT_TIMESTAMP
-		WHERE lane_id = $2 AND position > $3
-	`, newLaneID, laneID, splitPosition)
-	if err != nil {
-		return nil, err
-	}
-	
-	// Reorder cards in the new lane
-	_, err = tx.ExecContext(ctx, `
-		UPDATE planner_card
-		SET position = position - $1, updated_at = CURRENT_TIMESTAMP
-		WHERE lane_id = $2
-	`, splitPosition, newLaneID)
-	if err != nil {
-		return nil, err
-	}
-	
-	// Commit the transaction
-	if err := tx.Commit(); err != nil {
-		return nil, err
-	}
-	
-	// Return the new lane
-	return &PlannerLane{
+	newLane := PlannerLane{
 		ID:          newLaneID,
-		PlannerID:   plannerID,
 		Title:       newTitle,
 		Description: newDescription,
-		Position:    position + 1,
+		Position:    splitPosition + 1,
 		CreatedAt:   time.Now(),
 		UpdatedAt:   time.Now(),
 		Cards:       []PlannerCard{},
-	}, nil
+	}
+
+	// Push new lane into planner document containing laneID
+	_, err := plannerCollection.UpdateOne(
+		ctx,
+		bson.M{"lanes.id": laneID},
+		bson.M{"$push": bson.M{"lanes": newLane}},
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return &newLane, nil
 }
 
 // HandleAddLane handles POST /planner/{id}/lane

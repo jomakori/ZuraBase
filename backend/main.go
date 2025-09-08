@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -10,14 +9,15 @@ import (
 	"os"
 	"strings"
 
-	_ "github.com/lib/pq"
+	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 
 	"zurabase/notes"
 	"zurabase/pexels"
 	"zurabase/planner"
 )
 
-var db *sql.DB
+var mongoClient *mongo.Client
 
 // HealthCheckResponse represents the response from the health check endpoint
 type HealthCheckResponse struct {
@@ -25,24 +25,11 @@ type HealthCheckResponse struct {
 	Error  string `json:"error,omitempty"`
 }
 
-// HealthCheck checks if the database connection is healthy
+// HealthCheck checks if the MongoDB connection is healthy
 func HealthCheck(ctx context.Context) (*HealthCheckResponse, error) {
-	var result int
-	err := db.QueryRowContext(ctx, "SELECT 1").Scan(&result)
-	if err != nil {
-		return &HealthCheckResponse{Status: "unhealthy", Error: "Database connection failed"}, err
+	if err := mongoClient.Ping(ctx, nil); err != nil {
+		return &HealthCheckResponse{Status: "unhealthy", Error: "MongoDB connection failed"}, err
 	}
-	
-	// Check if required tables exist
-	tables := []string{"note", "planner_template", "planner", "planner_lane", "planner_card"}
-	for _, table := range tables {
-		var tableExists string
-		err = db.QueryRowContext(ctx, fmt.Sprintf("SELECT to_regclass('public.%s')", table)).Scan(&tableExists)
-		if err != nil || tableExists == "" {
-			return &HealthCheckResponse{Status: "unhealthy", Error: fmt.Sprintf("Table '%s' does not exist", table)}, err
-		}
-	}
-	
 	return &HealthCheckResponse{Status: "healthy"}, nil
 }
 
@@ -77,113 +64,29 @@ func CORS(next http.Handler) http.Handler {
 }
 
 func main() {
-	// Initialize database connection
-	var err error
-	
 	// Validate required environment variables
-	requiredEnvVars := []string{"POSTGRES_USER", "POSTGRES_PASSWORD", "POSTGRES_HOST", "POSTGRES_DB", "UI_ENDPOINT"}
+	requiredEnvVars := []string{"MONGO_URI", "UI_ENDPOINT"}
 	for _, envVar := range requiredEnvVars {
 		if os.Getenv(envVar) == "" {
 			log.Fatalf("Required environment variable %s is not set", envVar)
 		}
 	}
-	
-	// Build the connection string from environment variables
-	connStr := fmt.Sprintf("postgres://%s:%s@%s/%s?sslmode=disable",
-		os.Getenv("POSTGRES_USER"),
-		os.Getenv("POSTGRES_PASSWORD"),
-		os.Getenv("POSTGRES_HOST"),
-		os.Getenv("POSTGRES_DB"),
-	)
-	
-	// Open a connection to the database
-	db, err = sql.Open("postgres", connStr)
+
+	// Connect to MongoDB
+	var err error
+	mongoClient, err = mongo.Connect(context.Background(), options.Client().ApplyURI(os.Getenv("MONGO_URI")))
 	if err != nil {
-		log.Fatalf("Failed to connect to the database: %v", err)
+		log.Fatalf("Failed to connect to MongoDB: %v", err)
 	}
-	
-	// Ensure the required tables exist
-	ctx := context.Background()
-	
-	// Create note table if it doesn't exist
-	_, err = db.ExecContext(ctx, `
-		CREATE TABLE IF NOT EXISTS note (
-			id TEXT PRIMARY KEY,
-			text TEXT,
-			cover_url TEXT
-		)
-	`)
-	if err != nil {
-		log.Fatalf("Failed to ensure note table exists: %v", err)
-	}
-	
-	// Create planner tables if they don't exist
-	_, err = db.ExecContext(ctx, `
-		-- Create planner_template table
-		CREATE TABLE IF NOT EXISTS planner_template (
-		  id TEXT PRIMARY KEY,
-		  name TEXT NOT NULL,
-		  type TEXT NOT NULL,
-		  description TEXT,
-		  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-		);
+	defer mongoClient.Disconnect(context.Background())
 
-		-- Create planner_template_lane table
-		CREATE TABLE IF NOT EXISTS planner_template_lane (
-		  id TEXT PRIMARY KEY,
-		  template_id TEXT NOT NULL REFERENCES planner_template(id) ON DELETE CASCADE,
-		  name TEXT NOT NULL,
-		  description TEXT,
-		  position INTEGER NOT NULL,
-		  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-		);
+	// Initialize packages
+	notes.Initialize(mongoClient, "zurabase")
+	planner.Initialize(mongoClient, "zurabase")
 
-		-- Create planner table
-		CREATE TABLE IF NOT EXISTS planner (
-		  id TEXT PRIMARY KEY,
-		  title TEXT NOT NULL,
-		  description TEXT,
-		  template_id TEXT NOT NULL REFERENCES planner_template(id),
-		  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-		  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-		);
-
-		-- Create planner_lane table
-		CREATE TABLE IF NOT EXISTS planner_lane (
-		  id TEXT PRIMARY KEY,
-		  planner_id TEXT NOT NULL REFERENCES planner(id) ON DELETE CASCADE,
-		  template_lane_id TEXT REFERENCES planner_template_lane(id),
-		  title TEXT NOT NULL,
-		  position INTEGER NOT NULL,
-		  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-		  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-		);
-
-		-- Create planner_card table
-		CREATE TABLE IF NOT EXISTS planner_card (
-		  id TEXT PRIMARY KEY,
-		  lane_id TEXT NOT NULL REFERENCES planner_lane(id) ON DELETE CASCADE,
-		  title TEXT NOT NULL,
-		  content TEXT,
-		  position INTEGER NOT NULL,
-		  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-		  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-		);
-	`)
-	if err != nil {
-		log.Fatalf("Failed to ensure planner tables exist: %v", err)
-	}
-	
-	// Initialize the notes and planner packages with the database connection
-	notes.Initialize(db)
-	planner.Initialize(db)
-	
-	// Initialize planner templates
 	if err := planner.InitializeTemplates(context.Background()); err != nil {
 		log.Fatalf("Failed to initialize planner templates: %v", err)
 	}
-	
-	// Create a new router
 	mux := http.NewServeMux()
 	
 	// Register health check route

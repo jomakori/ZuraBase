@@ -20,6 +20,7 @@ export interface PlannerTemplateLane {
 
 /** Represents a planner board */
 export interface Planner {
+  /** Unique planner ID */
   id: string;
   title: string;
   description: string;
