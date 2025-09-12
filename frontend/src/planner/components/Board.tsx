@@ -259,16 +259,23 @@ const Board: React.FC<BoardProps> = ({
       onPlannerUpdate({
         ...planner,
         lanes: planner.lanes.map((lane) => {
-          if (lane.id === newLaneId) {
+          // If it's the source lane, remove the card
+          if (lane.cards.some((c) => c.id === cardId)) {
             return {
               ...lane,
-              cards: [...lane.cards, movedCard],
+              cards: lane.cards.filter((c) => c.id !== cardId),
             };
           }
-          return {
-            ...lane,
-            cards: lane.cards.filter((c) => c.id !== cardId),
-          };
+          // If it's the target lane, insert card at correct position
+          if (lane.id === newLaneId) {
+            const newCards = [...lane.cards];
+            newCards.splice(newPosition, 0, movedCard);
+            return {
+              ...lane,
+              cards: newCards,
+            };
+          }
+          return lane;
         }),
       });
     } catch (error) {
@@ -290,7 +297,14 @@ const Board: React.FC<BoardProps> = ({
             );
             newOrder.splice(newOrder.indexOf(draggedLaneId), 1);
             newOrder.splice(targetIndex, 0, draggedLaneId);
-            reorderLanes(planner.id, newOrder);
+            reorderLanes(planner.id, newOrder).then(() => {
+              onPlannerUpdate({
+                ...planner,
+                lanes: newOrder.map(
+                  (id) => planner.lanes.find((l) => l.id === id)!
+                ),
+              });
+            });
           }
         }}
       >

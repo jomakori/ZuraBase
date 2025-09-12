@@ -12,7 +12,7 @@ import (
 )
 
 // AddLane adds a new lane to a planner document in MongoDB
-func AddLane(ctx context.Context, plannerID, title, description string, position int) (*PlannerLane, error) {
+func AddLane(ctx context.Context, plannerID, title, description, color string, position int) (*PlannerLane, error) {
 	log.Printf("Adding lane: plannerID=%s, title=%s, position=%d", plannerID, title, position)
 
 	laneID := generateID()
@@ -21,6 +21,7 @@ func AddLane(ctx context.Context, plannerID, title, description string, position
 		PlannerID:   plannerID,
 		Title:       title,
 		Description: description,
+		Color:       color,
 		Position:    position,
 		CreatedAt:   time.Now(),
 		UpdatedAt:   time.Now(),
@@ -47,13 +48,14 @@ func AddLane(ctx context.Context, plannerID, title, description string, position
 }
 
  // UpdateLane updates a lane's title and description in MongoDB
-func UpdateLane(ctx context.Context, laneID, title, description string) (*PlannerLane, error) {
+func UpdateLane(ctx context.Context, laneID, title, description, color string) (*PlannerLane, error) {
 	log.Printf("Updating lane: id=%s, title=%s", laneID, title)
 
 	filter := bson.M{"lanes.id": laneID}
 	update := bson.M{"$set": bson.M{
 		"lanes.$.title":       title,
 		"lanes.$.description": description,
+		"lanes.$.color":       color,
 		"lanes.$.updated_at":  time.Now(),
 	}}
 
@@ -67,6 +69,7 @@ func UpdateLane(ctx context.Context, laneID, title, description string) (*Planne
 		ID:          laneID,
 		Title:       title,
 		Description: description,
+		Color:       color,
 		UpdatedAt:   time.Now(),
 		Cards:       []PlannerCard{},
 	}
@@ -103,7 +106,7 @@ func ReorderLanes(ctx context.Context, plannerID string, laneIDs []string) error
 }
 
  // SplitLane splits a lane into two lanes in MongoDB
-func SplitLane(ctx context.Context, laneID, newTitle, newDescription string, splitPosition int) (*PlannerLane, error) {
+func SplitLane(ctx context.Context, laneID, newTitle, newDescription, newColor string, splitPosition int) (*PlannerLane, error) {
 	log.Printf("Splitting lane: id=%s, newTitle=%s, splitPosition=%d", laneID, newTitle, splitPosition)
 
 	// Construct new lane
@@ -112,6 +115,7 @@ func SplitLane(ctx context.Context, laneID, newTitle, newDescription string, spl
 		ID:          newLaneID,
 		Title:       newTitle,
 		Description: newDescription,
+		Color:       newColor,
 		Position:    splitPosition + 1,
 		CreatedAt:   time.Now(),
 		UpdatedAt:   time.Now(),
@@ -153,6 +157,7 @@ func HandleAddLane(w http.ResponseWriter, r *http.Request) {
 	var request struct {
 		Title       string `json:"title"`
 		Description string `json:"description"`
+		Color       string `json:"color"`
 		Position    int    `json:"position"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
@@ -160,7 +165,7 @@ func HandleAddLane(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	
-	lane, err := AddLane(r.Context(), plannerID, request.Title, request.Description, request.Position)
+	lane, err := AddLane(r.Context(), plannerID, request.Title, request.Description, request.Color, request.Position)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -194,13 +199,14 @@ func HandleUpdateLane(w http.ResponseWriter, r *http.Request) {
 	var request struct {
 		Title       string `json:"title"`
 		Description string `json:"description"`
+		Color       string `json:"color"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	
-	lane, err := UpdateLane(r.Context(), laneID, request.Title, request.Description)
+	lane, err := UpdateLane(r.Context(), laneID, request.Title, request.Description, request.Color)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -256,6 +262,7 @@ func HandleSplitLane(w http.ResponseWriter, r *http.Request) {
 	var request struct {
 		NewTitle       string `json:"new_title"`
 		NewDescription string `json:"new_description"`
+		NewColor       string `json:"new_color"`
 		SplitPosition  int    `json:"split_position"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
@@ -263,7 +270,7 @@ func HandleSplitLane(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	
-	lane, err := SplitLane(r.Context(), laneID, request.NewTitle, request.NewDescription, request.SplitPosition)
+	lane, err := SplitLane(r.Context(), laneID, request.NewTitle, request.NewDescription, request.NewColor, request.SplitPosition)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

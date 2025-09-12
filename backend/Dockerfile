@@ -1,5 +1,5 @@
 # Use the official Golang image as a base image
-FROM golang:1.23-alpine
+FROM golang:1.25-alpine
 
 # Install curl for healthchecks
 RUN apk add --no-cache curl

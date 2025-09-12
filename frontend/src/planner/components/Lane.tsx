@@ -171,22 +171,47 @@ const Lane: React.FC<LaneProps> = ({
             <div {...dragHandleProps} className="cursor-grab">
               <DotsSixVertical size={16} />
             </div>
-            <select
-              value={laneColor}
-              onChange={(e) => {
-                const newColor = e.target.value;
-                setLaneColor(newColor);
-                onUpdateLane(lane.id, title, description, newColor);
-              }}
-              className="p-1 rounded"
-            >
-              <option value="">🎨</option>
-              {laneColors.map((c) => (
-                <option key={c} value={c} style={{ backgroundColor: c }}>
-                  &nbsp;&nbsp;&nbsp;
-                </option>
-              ))}
-            </select>
+            {/* Custom Color Picker */}
+            <div className="relative">
+              <button
+                className="w-6 h-6 rounded-full border-2 border-white shadow"
+                style={{ backgroundColor: laneColor }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  const newColor =
+                    prompt("Enter HEX color", laneColor) || laneColor;
+                  setLaneColor(newColor);
+                  onUpdateLane(lane.id, title, description, newColor);
+                }}
+                title="Change lane color"
+              />
+              <div className="absolute right-0 mt-2 w-40 bg-white border rounded shadow p-2 z-50">
+                <input
+                  type="text"
+                  value={laneColor}
+                  onChange={(e) => setLaneColor(e.target.value)}
+                  onBlur={() =>
+                    onUpdateLane(lane.id, title, description, laneColor)
+                  }
+                  className="w-full mb-2 p-1 border rounded text-xs"
+                />
+                <div className="grid grid-cols-6 gap-1">
+                  {laneColors.map((c) => (
+                    <button
+                      key={c}
+                      className={`w-6 h-6 rounded-full border ${
+                        laneColor === c ? "border-black" : "border-gray-300"
+                      }`}
+                      style={{ backgroundColor: c }}
+                      onClick={() => {
+                        setLaneColor(c);
+                        onUpdateLane(lane.id, title, description, c);
+                      }}
+                    />
+                  ))}
+                </div>
+              </div>
+            </div>
             <button
               onClick={() => {
                 setSplitTitle("");
