@@ -1,4 +1,10 @@
 import React, { useState } from "react";
+import {
+  DragDropContext,
+  Droppable,
+  Draggable,
+  DropResult,
+} from "@hello-pangea/dnd";
 import { Planner, PlannerLane, PlannerColumn, PlannerCard } from "../types";
 import Lane from "./Lane";
 import { Plus } from "@phosphor-icons/react";
@@ -283,139 +289,144 @@ const Board: React.FC<BoardProps> = ({
     }
   };
 
-  return (
-    <div className="h-full w-full overflow-x-auto">
-      <div
-        className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 pb-4 h-full items-start auto-rows-max"
-        onDragOver={(e) => e.preventDefault()}
-        onDrop={(e) => {
-          const draggedLaneId = e.dataTransfer.getData("laneId");
-          if (draggedLaneId) {
-            const newOrder = [...planner.lanes.map((l) => l.id)];
-            const targetIndex = Math.floor(
-              newOrder.length * (e.clientX / window.innerWidth)
-            );
-            newOrder.splice(newOrder.indexOf(draggedLaneId), 1);
-            newOrder.splice(targetIndex, 0, draggedLaneId);
-            reorderLanes(planner.id, newOrder).then(() => {
-              onPlannerUpdate({
-                ...planner,
-                lanes: newOrder.map(
-                  (id) => planner.lanes.find((l) => l.id === id)!
-                ),
-              });
-            });
-          }
-        }}
-      >
-        {/* Lanes */}
-        {planner.lanes
-          .filter((lane) => !(lane as any).parentId)
-          .map((lane) => {
-            const childLanes = planner.lanes.filter(
-              (l) => (l as any).parentId === lane.id
-            );
-            return (
-              <div
-                key={lane.id}
-                draggable
-                onDragStart={(e) => e.dataTransfer.setData("laneId", lane.id)}
-                className="h-full"
-              >
-                <Lane
-                  lane={{
-                    ...lane,
-                    color:
-                      lane.color ||
-                      (lane.title.toLowerCase().includes("done")
-                        ? "#34D399"
-                        : lane.title.toLowerCase().includes("progress")
-                        ? "#FBBF24"
-                        : lane.title.toLowerCase().includes("stuck")
-                        ? "#F87171"
-                        : lane.title.toLowerCase().includes("live")
-                        ? "#60A5FA"
-                        : "#E5E7EB"),
-                  }}
-                  onAddCard={handleAddCard}
-                  onUpdateCard={handleUpdateCard}
-                  onDeleteCard={handleDeleteCard}
-                  onUpdateLane={handleUpdateLane}
-                  onDeleteLane={handleDeleteLane}
-                  onSplitLane={(laneId, newTitle, newDesc, pos, color) =>
-                    handleSplitLane(laneId, newTitle, newDesc, pos, color).then(
-                      (newLane) => {
-                        (newLane as any).parentId = lane.id;
-                      }
-                    )
-                  }
-                  onMoveCard={handleMoveCard}
-                />
-                {/* Render child lanes */}
-                {childLanes.length > 0 && (
-                  <div className="ml-4 mt-2 space-y-2">
-                    {childLanes.map((child) => (
-                      <Lane
-                        key={child.id}
-                        lane={child}
-                        onAddCard={handleAddCard}
-                        onUpdateCard={handleUpdateCard}
-                        onDeleteCard={handleDeleteCard}
-                        onUpdateLane={handleUpdateLane}
-                        onDeleteLane={handleDeleteLane}
-                        onSplitLane={handleSplitLane}
-                        onMoveCard={handleMoveCard}
-                      />
-                    ))}
-                  </div>
-                )}
-              </div>
-            );
-          })}
+  const onDragEnd = async (result: DropResult) => {
+    const { destination, source, draggableId, type } = result;
 
-        {/* Add Lane Form */}
-        {isAddingLane ? (
-          <div className="bg-white rounded-lg p-3 w-72 flex-shrink-0 shadow">
-            <input
-              type="text"
-              value={newLaneTitle}
-              onChange={(e) => setNewLaneTitle(e.target.value)}
-              className="w-full mb-2 p-2 border border-gray-300 rounded"
-              placeholder="Lane title"
-            />
-            <textarea
-              value={newLaneDescription}
-              onChange={(e) => setNewLaneDescription(e.target.value)}
-              className="w-full mb-2 p-2 border border-gray-300 rounded"
-              placeholder="Lane description"
-              rows={2}
-            />
-            <div className="flex justify-end space-x-2">
-              <button
-                onClick={() => setIsAddingLane(false)}
-                className="px-3 py-1 bg-gray-200 rounded hover:bg-gray-300"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleAddLane}
-                className="px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600"
-              >
-                Add
-              </button>
+    if (!destination) return;
+
+    // Don't do anything if the item was dropped back in the same position
+    if (
+      destination.droppableId === source.droppableId &&
+      destination.index === source.index
+    ) {
+      return;
+    }
+
+    try {
+      if (type === "lane") {
+        const newOrder = Array.from(planner.lanes);
+        const [removed] = newOrder.splice(source.index, 1);
+        newOrder.splice(destination.index, 0, removed);
+
+        // Update UI optimistically first
+        onPlannerUpdate({ ...planner, lanes: newOrder });
+
+        // Then persist to backend
+        await reorderLanes(
+          planner.id,
+          newOrder.map((l) => l.id)
+        );
+      } else if (type === "card") {
+        const sourceLane = planner.lanes.find(
+          (l) => l.id === source.droppableId
+        );
+        const destLane = planner.lanes.find(
+          (l) => l.id === destination.droppableId
+        );
+        if (!sourceLane || !destLane) return;
+
+        const sourceCards = Array.from(sourceLane.cards);
+        const [moved] = sourceCards.splice(source.index, 1);
+
+        if (sourceLane.id === destLane.id) {
+          // Reordering within the same lane
+          sourceCards.splice(destination.index, 0, moved);
+
+          // Update UI optimistically first
+          onPlannerUpdate({
+            ...planner,
+            lanes: planner.lanes.map((l) =>
+              l.id === sourceLane.id ? { ...l, cards: sourceCards } : l
+            ),
+          });
+
+          // Then persist to backend
+          await reorderCards(
+            planner.id,
+            sourceLane.id,
+            sourceCards.map((c) => c.id)
+          );
+        } else {
+          // Moving between lanes
+          const destCards = Array.from(destLane.cards);
+          destCards.splice(destination.index, 0, moved);
+
+          // Update UI optimistically first
+          onPlannerUpdate({
+            ...planner,
+            lanes: planner.lanes.map((l) => {
+              if (l.id === sourceLane.id) return { ...l, cards: sourceCards };
+              if (l.id === destLane.id) return { ...l, cards: destCards };
+              return l;
+            }),
+          });
+
+          // Then persist to backend
+          await moveCard(planner.id, moved.id, destLane.id, destination.index);
+        }
+      }
+    } catch (error) {
+      console.error("Failed to persist drag and drop changes:", error);
+      // TODO: Consider reverting the UI change if the backend call fails
+    }
+  };
+
+  return (
+    <DragDropContext onDragEnd={onDragEnd}>
+      {/* @ts-ignore */}
+      <Droppable droppableId="all-lanes" type="lane" direction="horizontal">
+        {(provided: any, snapshot: any) =>
+          (
+            <div
+              className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 pb-4 h-full items-start auto-rows-max"
+              ref={provided.innerRef}
+              {...provided.droppableProps}
+            >
+              {planner.lanes.map((lane, index) => (
+                <Draggable key={lane.id} draggableId={lane.id} index={index}>
+                  {(laneProvided: any) =>
+                    (
+                      <div
+                        ref={laneProvided.innerRef}
+                        {...laneProvided.draggableProps}
+                        {...laneProvided.dragHandleProps}
+                        className="h-full"
+                      >
+                        <Lane
+                          lane={{
+                            ...lane,
+                            color:
+                              lane.color ||
+                              (lane.title.toLowerCase().includes("done")
+                                ? "#34D399"
+                                : lane.title.toLowerCase().includes("progress")
+                                ? "#FBBF24"
+                                : lane.title.toLowerCase().includes("stuck")
+                                ? "#F87171"
+                                : lane.title.toLowerCase().includes("live")
+                                ? "#60A5FA"
+                                : "#E5E7EB"),
+                          }}
+                          onAddCard={handleAddCard}
+                          onUpdateCard={handleUpdateCard}
+                          onDeleteCard={handleDeleteCard}
+                          onUpdateLane={handleUpdateLane}
+                          onDeleteLane={handleDeleteLane}
+                          onSplitLane={handleSplitLane}
+                          onMoveCard={handleMoveCard}
+                        />
+                      </div>
+                    ) as any
+                  }
+                </Draggable>
+              ))}
+              {provided.placeholder as any}
+              {/* Add Lane Form */}
             </div>
-          </div>
-        ) : (
-          <button
-            onClick={() => setIsAddingLane(true)}
-            className="bg-gray-100 rounded-lg p-3 w-72 flex-shrink-0 h-16 flex items-center justify-center hover:bg-gray-200"
-          >
-            <Plus size={20} className="mr-2" />
-            <span>Add Lane</span>
-          </button>
-        )}
-      </div>
-    </div>
+          ) as any
+        }
+      </Droppable>
+    </DragDropContext>
   );
 };
 

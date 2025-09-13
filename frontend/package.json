@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@headlessui/react": "^1.7.15",
+    "@hello-pangea/dnd": "^18.0.1",
     "@milkdown/core": "^7.2.3",
     "@milkdown/ctx": "^7.2.3",
     "@milkdown/plugin-history": "^7.2.3",

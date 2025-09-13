@@ -10,6 +10,7 @@ import {
   CaretDown,
   CaretRight,
 } from "@phosphor-icons/react";
+import { Droppable, Draggable } from "@hello-pangea/dnd";
 
 interface LaneProps {
   lane: PlannerLane;
@@ -59,6 +60,7 @@ const Lane: React.FC<LaneProps> = ({
 
   const [laneColor, setLaneColor] = useState(lane.color || "#E5E7EB");
   const [collapsed, setCollapsed] = useState(false);
+  const [showColorPicker, setShowColorPicker] = useState(false);
 
   // Split states
   const [isSplittingLane, setIsSplittingLane] = useState(false);
@@ -94,18 +96,6 @@ const Lane: React.FC<LaneProps> = ({
     "#A78BFA",
     "#F472B6",
   ];
-
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-  };
-
-  const handleDrop = (e: React.DragEvent, position: number) => {
-    e.preventDefault();
-    const cardId = e.dataTransfer.getData("cardId");
-    if (cardId) {
-      onMoveCard(cardId, lane.id, position);
-    }
-  };
 
   return (
     <div
@@ -178,39 +168,40 @@ const Lane: React.FC<LaneProps> = ({
                 style={{ backgroundColor: laneColor }}
                 onClick={(e) => {
                   e.stopPropagation();
-                  const newColor =
-                    prompt("Enter HEX color", laneColor) || laneColor;
-                  setLaneColor(newColor);
-                  onUpdateLane(lane.id, title, description, newColor);
+                  setShowColorPicker(!showColorPicker);
                 }}
                 title="Change lane color"
               />
-              <div className="absolute right-0 mt-2 w-40 bg-white border rounded shadow p-2 z-50">
-                <input
-                  type="text"
-                  value={laneColor}
-                  onChange={(e) => setLaneColor(e.target.value)}
-                  onBlur={() =>
-                    onUpdateLane(lane.id, title, description, laneColor)
-                  }
-                  className="w-full mb-2 p-1 border rounded text-xs"
-                />
-                <div className="grid grid-cols-6 gap-1">
-                  {laneColors.map((c) => (
-                    <button
-                      key={c}
-                      className={`w-6 h-6 rounded-full border ${
-                        laneColor === c ? "border-black" : "border-gray-300"
-                      }`}
-                      style={{ backgroundColor: c }}
-                      onClick={() => {
-                        setLaneColor(c);
-                        onUpdateLane(lane.id, title, description, c);
-                      }}
-                    />
-                  ))}
+              {showColorPicker && (
+                <div className="absolute right-0 mt-2 w-40 bg-white border rounded shadow p-2 z-50">
+                  <input
+                    type="text"
+                    value={laneColor}
+                    onChange={(e) => setLaneColor(e.target.value)}
+                    onBlur={() => {
+                      onUpdateLane(lane.id, title, description, laneColor);
+                      setShowColorPicker(false);
+                    }}
+                    className="w-full mb-2 p-1 border rounded text-xs"
+                  />
+                  <div className="grid grid-cols-6 gap-1">
+                    {laneColors.map((c) => (
+                      <button
+                        key={c}
+                        className={`w-6 h-6 rounded-full border ${
+                          laneColor === c ? "border-black" : "border-gray-300"
+                        }`}
+                        style={{ backgroundColor: c }}
+                        onClick={() => {
+                          setLaneColor(c);
+                          onUpdateLane(lane.id, title, description, c);
+                          setShowColorPicker(false);
+                        }}
+                      />
+                    ))}
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
             <button
               onClick={() => {
@@ -305,28 +296,39 @@ const Lane: React.FC<LaneProps> = ({
       {/* Cards / Collapsed Content */}
       {!collapsed ? (
         <>
-          <div
-            className="overflow-y-auto flex-1 space-y-2"
-            onDragOver={handleDragOver}
-            onDrop={(e) => handleDrop(e, lane.cards?.length ?? 0)}
-          >
-            {lane.cards?.map((card, idx) => (
+          {/* @ts-ignore */}
+          <Droppable droppableId={lane.id} type="card">
+            {/* @ts-ignore */}
+            {(droppableProvided, droppableSnapshot) => (
               <div
-                key={card.id}
-                draggable
-                onDragStart={(e) => e.dataTransfer.setData("cardId", card.id)}
-                onDragOver={handleDragOver}
-                onDrop={(e) => handleDrop(e, idx)}
-                className="bg-white rounded shadow"
+                className="overflow-y-auto flex-1 space-y-2"
+                ref={droppableProvided.innerRef}
+                {...droppableProvided.droppableProps}
               >
-                <Card
-                  card={card}
-                  onUpdate={onUpdateCard}
-                  onDelete={onDeleteCard}
-                />
+                {lane.cards?.map((card, idx) => (
+                  /* @ts-ignore */
+                  <Draggable key={card.id} draggableId={card.id} index={idx}>
+                    {/* @ts-ignore */}
+                    {(draggableProvided, draggableSnapshot) => (
+                      <div
+                        ref={draggableProvided.innerRef}
+                        {...draggableProvided.draggableProps}
+                        {...draggableProvided.dragHandleProps}
+                        className="bg-white rounded shadow"
+                      >
+                        <Card
+                          card={card}
+                          onUpdate={onUpdateCard}
+                          onDelete={onDeleteCard}
+                        />
+                      </div>
+                    )}
+                  </Draggable>
+                ))}
+                {droppableProvided.placeholder as any}
               </div>
-            )) ?? []}
-          </div>
+            )}
+          </Droppable>
 
           {/* Add Card Form */}
           {isAddingCard ? (
