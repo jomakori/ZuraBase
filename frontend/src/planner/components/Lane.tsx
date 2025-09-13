@@ -158,7 +158,7 @@ const Lane: React.FC<LaneProps> = ({
             >
               {collapsed ? <CaretRight size={16} /> : <CaretDown size={16} />}
             </button>
-            <div {...dragHandleProps} className="cursor-grab">
+            <div {...dragHandleProps} className="cursor-grab" onClick={(e) => e.stopPropagation()}>
               <DotsSixVertical size={16} />
             </div>
             {/* Custom Color Picker */}
@@ -301,7 +301,11 @@ const Lane: React.FC<LaneProps> = ({
             {/* @ts-ignore */}
             {(droppableProvided, droppableSnapshot) => (
               <div
-                className="overflow-y-auto flex-1 space-y-2"
+                className={`overflow-y-auto flex-1 space-y-2 min-h-[50px] transition-colors duration-200 ${
+                  droppableSnapshot.isDraggingOver
+                    ? "bg-blue-50 rounded border-2 border-dashed border-blue-300"
+                    : ""
+                }`}
                 ref={droppableProvided.innerRef}
                 {...droppableProvided.droppableProps}
               >
@@ -325,7 +329,14 @@ const Lane: React.FC<LaneProps> = ({
                     )}
                   </Draggable>
                 ))}
+                {/* Always render placeholder even for empty lanes */}
                 {droppableProvided.placeholder as any}
+                {/* Empty state for droppable area */}
+                {(!lane.cards || lane.cards.length === 0) && (
+                  <div className="h-12 border-2 border-dashed border-gray-300 rounded flex items-center justify-center text-gray-400 text-sm">
+                    Drop cards here
+                  </div>
+                )}
               </div>
             )}
           </Droppable>

@@ -125,19 +125,60 @@ const Board: React.FC<BoardProps> = ({
     newColor: string
   ) => {
     try {
-      const newLane = await splitLane(
+      // Find the original lane
+      const originalLane = planner.lanes.find((l) => l.id === laneId);
+      if (!originalLane) return;
+
+      // Create new lane with proper position
+      const newLanePosition = originalLane.position + 1;
+      const newLane = await addLane(
         planner.id,
-        laneId,
         newTitle,
         newDescription,
-        splitPosition,
+        newLanePosition,
         newColor
       );
+
+      // Move cards from original lane to new lane (client-side redistribution)
+      const cardsToMove = originalLane.cards.slice(splitPosition);
+
+      // Update original lane to remove moved cards
+      const updatedOriginalLane = {
+        ...originalLane,
+        cards: originalLane.cards.slice(0, splitPosition),
+      };
+
+      // Add moved cards to new lane
+      const updatedNewLane = {
+        ...newLane,
+        cards: cardsToMove,
+      };
+
+      // Update all lanes with new positions
+      const updatedLanes = planner.lanes.map((lane) => {
+        if (lane.id === laneId) return updatedOriginalLane;
+        // Shift positions for lanes after the original lane
+        if (lane.position > originalLane.position) {
+          return { ...lane, position: lane.position + 1 };
+        }
+        return lane;
+      });
+
+      // Insert the new lane at the correct position
+      updatedLanes.splice(originalLane.position + 1, 0, updatedNewLane);
+
       onPlannerUpdate({
         ...planner,
-        lanes: [...planner.lanes, newLane].sort(
-          (a, b) => a.position - b.position
-        ),
+        lanes: updatedLanes,
+      });
+
+      // Move cards to new lane in backend (async, won't block UI)
+      cardsToMove.forEach(async (card, index) => {
+        try {
+          await moveCard(planner.id, card.id, newLane.id, index);
+        } catch (error) {
+          console.error("Failed to move card during split:", error);
+        }
       });
     } catch (error) {
       console.error("Failed to split lane:", error);
@@ -292,13 +333,20 @@ const Board: React.FC<BoardProps> = ({
   const onDragEnd = async (result: DropResult) => {
     const { destination, source, draggableId, type } = result;
 
-    if (!destination) return;
+    // Store original state for potential rollback
+    const originalPlannerState = { ...planner };
+
+    if (!destination) {
+      console.log("Drag cancelled - no destination");
+      return;
+    }
 
     // Don't do anything if the item was dropped back in the same position
     if (
       destination.droppableId === source.droppableId &&
       destination.index === source.index
     ) {
+      console.log("Drag cancelled - same position");
       return;
     }
 
@@ -316,6 +364,9 @@ const Board: React.FC<BoardProps> = ({
           planner.id,
           newOrder.map((l) => l.id)
         );
+        
+        console.log("Lane reorder successful");
+
       } else if (type === "card") {
         const sourceLane = planner.lanes.find(
           (l) => l.id === source.droppableId
@@ -323,7 +374,17 @@ const Board: React.FC<BoardProps> = ({
         const destLane = planner.lanes.find(
           (l) => l.id === destination.droppableId
         );
-        if (!sourceLane || !destLane) return;
+        
+        if (!sourceLane || !destLane) {
+          console.error("Source or destination lane not found");
+          return;
+        }
+
+        // Validate that the moved card exists
+        if (source.index >= sourceLane.cards.length) {
+          console.error("Card index out of bounds");
+          return;
+        }
 
         const sourceCards = Array.from(sourceLane.cards);
         const [moved] = sourceCards.splice(source.index, 1);
@@ -346,6 +407,9 @@ const Board: React.FC<BoardProps> = ({
             sourceLane.id,
             sourceCards.map((c) => c.id)
           );
+          
+          console.log("Card reorder within lane successful");
+
         } else {
           // Moving between lanes
           const destCards = Array.from(destLane.cards);
@@ -363,11 +427,18 @@ const Board: React.FC<BoardProps> = ({
 
           // Then persist to backend
           await moveCard(planner.id, moved.id, destLane.id, destination.index);
+          
+          console.log("Card move between lanes successful");
         }
       }
     } catch (error) {
       console.error("Failed to persist drag and drop changes:", error);
-      // TODO: Consider reverting the UI change if the backend call fails
+      
+      // Revert to original state on error
+      onPlannerUpdate(originalPlannerState);
+      
+      // Show user feedback (could be enhanced with toast notifications)
+      alert("Failed to save changes. Please try again.");
     }
   };
 
@@ -378,7 +449,7 @@ const Board: React.FC<BoardProps> = ({
         {(provided: any, snapshot: any) =>
           (
             <div
-              className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 pb-4 h-full items-start auto-rows-max"
+              className="flex flex-nowrap gap-4 pb-4 h-full items-start overflow-x-auto"
               ref={provided.innerRef}
               {...provided.droppableProps}
             >
@@ -390,7 +461,7 @@ const Board: React.FC<BoardProps> = ({
                         ref={laneProvided.innerRef}
                         {...laneProvided.draggableProps}
                         {...laneProvided.dragHandleProps}
-                        className="h-full"
+                        className="h-full min-w-[280px]"
                       >
                         <Lane
                           lane={{
@@ -422,6 +493,49 @@ const Board: React.FC<BoardProps> = ({
               ))}
               {provided.placeholder as any}
               {/* Add Lane Form */}
+              <div className="min-w-[280px]">
+                {isAddingLane ? (
+                  <div className="bg-white p-4 rounded-lg shadow border-2 border-dashed border-gray-300">
+                    <input
+                      type="text"
+                      value={newLaneTitle}
+                      onChange={(e) => setNewLaneTitle(e.target.value)}
+                      className="w-full mb-2 p-2 border border-gray-300 rounded"
+                      placeholder="Lane title"
+                      autoFocus
+                    />
+                    <textarea
+                      value={newLaneDescription}
+                      onChange={(e) => setNewLaneDescription(e.target.value)}
+                      className="w-full mb-2 p-2 border border-gray-300 rounded"
+                      placeholder="Lane description"
+                      rows={2}
+                    />
+                    <div className="flex justify-end space-x-2">
+                      <button
+                        onClick={() => setIsAddingLane(false)}
+                        className="px-3 py-1 text-sm bg-gray-200 rounded hover:bg-gray-300"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={handleAddLane}
+                        className="px-3 py-1 text-sm bg-blue-500 text-white rounded hover:bg-blue-600"
+                      >
+                        Add
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => setIsAddingLane(true)}
+                    className="w-full h-32 bg-gray-100 hover:bg-gray-200 rounded-lg border-2 border-dashed border-gray-300 flex items-center justify-center text-gray-500"
+                  >
+                    <Plus size={24} className="mr-2" />
+                    <span>Add Lane</span>
+                  </button>
+                )}
+              </div>
             </div>
           ) as any
         }

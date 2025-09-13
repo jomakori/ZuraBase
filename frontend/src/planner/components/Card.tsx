@@ -15,15 +15,9 @@ interface CardProps {
   card: PlannerCard;
   onUpdate: (cardId: string, title: string, content: string) => void;
   onDelete: (cardId: string) => void;
-  dragHandleProps?: React.HTMLAttributes<HTMLDivElement>;
 }
 
-const Card: React.FC<CardProps> = ({
-  card,
-  onUpdate,
-  onDelete,
-  dragHandleProps,
-}) => {
+const Card: React.FC<CardProps> = ({ card, onUpdate, onDelete }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [isFolded, setIsFolded] = useState(true); // New state for folding
   const [title, setTitle] = useState(card.fields?.title || "");
@@ -84,52 +78,39 @@ const Card: React.FC<CardProps> = ({
   }
 
   return (
-    /* @ts-ignore */
-    <Draggable draggableId={card.id} index={0}>
-      {/* @ts-ignore */}
-      {(provided, snapshot) => (
-        <div
-          ref={provided.innerRef}
-          {...provided.draggableProps}
-          className="bg-white p-3 rounded shadow mb-2 hover:shadow-md transition-shadow duration-200 transition-transform ease-in-out"
-        >
-          <div className="flex justify-between items-start">
-            <div className="flex items-center">
-              <button
-                onClick={() => setIsFolded(!isFolded)}
-                className="text-gray-500 hover:text-gray-700 mr-2"
-                aria-expanded={!isFolded}
-              >
-                {isFolded ? <CaretRight size={16} /> : <CaretDown size={16} />}
-              </button>
-              <h3 className="font-medium text-gray-900">
-                {card.fields?.title || "Untitled"}
-              </h3>
-            </div>
-            <div className="flex space-x-1">
-              <div {...provided.dragHandleProps} className="cursor-grab">
-                <DotsSixVertical size={16} />
-              </div>
-              <button
-                onClick={() => setIsEditing(true)}
-                className="text-gray-500 hover:text-blue-500"
-              >
-                <Pencil size={16} />
-              </button>
-              <button
-                onClick={() => onDelete(card.id)}
-                className="text-gray-500 hover:text-red-500"
-              >
-                <Trash size={16} />
-              </button>
-            </div>
-          </div>
-          {!isFolded && (
-            <div className="mt-2 text-sm text-gray-700">{renderMarkdown()}</div>
-          )}
+    <div className="bg-white p-3 rounded shadow mb-2 hover:shadow-md transition-shadow duration-200">
+      <div className="flex justify-between items-start">
+        <div className="flex items-center">
+          <button
+            onClick={() => setIsFolded(!isFolded)}
+            className="text-gray-500 hover:text-gray-700 mr-2"
+            aria-expanded={!isFolded}
+          >
+            {isFolded ? <CaretRight size={16} /> : <CaretDown size={16} />}
+          </button>
+          <h3 className="font-medium text-gray-900">
+            {card.fields?.title || "Untitled"}
+          </h3>
         </div>
+        <div className="flex space-x-1">
+          <button
+            onClick={() => setIsEditing(true)}
+            className="text-gray-500 hover:text-blue-500"
+          >
+            <Pencil size={16} />
+          </button>
+          <button
+            onClick={() => onDelete(card.id)}
+            className="text-gray-500 hover:text-red-500"
+          >
+            <Trash size={16} />
+          </button>
+        </div>
+      </div>
+      {!isFolded && (
+        <div className="mt-2 text-sm text-gray-700">{renderMarkdown()}</div>
       )}
-    </Draggable>
+    </div>
   );
 };
 
