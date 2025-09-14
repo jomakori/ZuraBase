@@ -484,48 +484,77 @@ const Board: React.FC<BoardProps> = ({
               ref={provided.innerRef}
               {...provided.droppableProps}
             >
-              {orderedLanes.map((lane, index) => (
-                <Draggable
-                  key={`lane-${lane.id}`}
-                  draggableId={`lane-${lane.id}`}
-                  index={index}
-                >
-                  {(laneProvided: any) =>
-                    (
-                      <div
-                        ref={laneProvided.innerRef}
-                        {...laneProvided.draggableProps}
-                        {...laneProvided.dragHandleProps}
-                        className="w-full sm:w-auto sm:h-full min-h-[200px] sm:min-h-0 sm:min-w-[280px] sm:max-w-[350px]"
-                      >
-                        <Lane
-                          lane={{
-                            ...lane,
-                            color:
-                              lane.color ||
-                              (lane.title.toLowerCase().includes("done")
-                                ? "#34D399"
-                                : lane.title.toLowerCase().includes("progress")
-                                ? "#FBBF24"
-                                : lane.title.toLowerCase().includes("stuck")
-                                ? "#F87171"
-                                : lane.title.toLowerCase().includes("live")
-                                ? "#60A5FA"
-                                : "#E5E7EB"),
-                          }}
-                          onAddCard={handleAddCard}
-                          onUpdateCard={handleUpdateCard}
-                          onDeleteCard={handleDeleteCard}
-                          onUpdateLane={handleUpdateLane}
-                          onDeleteLane={handleDeleteLane}
-                          onSplitLane={handleSplitLane}
-                          onMoveCard={handleMoveCard}
-                        />
-                      </div>
-                    ) as any
-                  }
-                </Draggable>
-              ))}
+              {(() => {
+                // Group lanes by template_lane_id
+                const groups: { [key: string]: PlannerLane[] } = {};
+                orderedLanes.forEach((lane) => {
+                  const groupId = lane.template_lane_id || lane.id;
+                  if (!groups[groupId]) groups[groupId] = [];
+                  groups[groupId].push(lane);
+                });
+
+                return Object.values(groups).map((group, gIndex) => {
+                  // Parent is the one where template_lane_id is empty or equals itself
+                  const parentLane = group.find(
+                    (l) => !l.template_lane_id || l.template_lane_id === l.id
+                  );
+                  const subLanes = group.filter(
+                    (l) => l.template_lane_id && l.template_lane_id !== l.id
+                  );
+
+                  return (
+                    <Draggable
+                      key={`lane-${parentLane?.id || group[0].id}`}
+                      draggableId={`lane-${parentLane?.id || group[0].id}`}
+                      index={gIndex}
+                    >
+                      {(laneProvided: any) =>
+                        (
+                          <div
+                            ref={laneProvided.innerRef}
+                            {...laneProvided.draggableProps}
+                            {...laneProvided.dragHandleProps}
+                            className="w-full sm:w-auto sm:h-full min-h-[200px] sm:min-h-0 sm:min-w-[280px] sm:max-w-[350px]"
+                          >
+                            {/* Parent Lane */}
+                            {parentLane && (
+                              <Lane
+                                lane={parentLane}
+                                onAddCard={handleAddCard}
+                                onUpdateCard={handleUpdateCard}
+                                onDeleteCard={handleDeleteCard}
+                                onUpdateLane={handleUpdateLane}
+                                onDeleteLane={handleDeleteLane}
+                                onSplitLane={handleSplitLane}
+                                onMoveCard={handleMoveCard}
+                              />
+                            )}
+
+                            {/* Render sub-lanes differently based on screen size */}
+                            {subLanes.length > 0 && (
+                              <div className="mt-2 flex flex-col sm:flex-row gap-2">
+                                {subLanes.map((sub) => (
+                                  <Lane
+                                    key={sub.id}
+                                    lane={sub}
+                                    onAddCard={handleAddCard}
+                                    onUpdateCard={handleUpdateCard}
+                                    onDeleteCard={handleDeleteCard}
+                                    onUpdateLane={handleUpdateLane}
+                                    onDeleteLane={handleDeleteLane}
+                                    onSplitLane={handleSplitLane}
+                                    onMoveCard={handleMoveCard}
+                                  />
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        ) as any
+                      }
+                    </Draggable>
+                  );
+                });
+              })()}
               {provided.placeholder as any}
               {/* Add Lane Form */}
               <div className="w-full sm:w-auto sm:min-w-[280px] sm:max-w-[350px] min-h-[200px] sm:min-h-0">

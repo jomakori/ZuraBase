@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"fmt"
+
 	"go.mongodb.org/mongo-driver/bson"
 )
 
@@ -186,7 +188,101 @@ func SplitLane(ctx context.Context, laneID, newTitle, newDescription, newColor s
 		return nil, err
 	}
 
+	// Reorder lanes so new lane appears immediately after the original
+	for i := range planner.Lanes {
+		if planner.Lanes[i].ID == originalLane.ID {
+			newLane.Position = planner.Lanes[i].Position + 1
+		}
+	}
+	// Shift subsequent lanes
+	for i := range planner.Lanes {
+		if planner.Lanes[i].Position >= newLane.Position {
+			_, _ = plannerCollection.UpdateOne(ctx,
+				bson.M{"lanes.id": planner.Lanes[i].ID},
+				bson.M{"$inc": bson.M{"lanes.$.position": 1}},
+			)
+		}
+	}
+
 	return &newLane, nil
+}
+ 
+// UnsplitLane merges a lane back into a target lane and removes the lane
+func UnsplitLane(ctx context.Context, laneID, targetLaneID string) error {
+	log.Printf("UnsplitLane: merging lane %s into lane %s", laneID, targetLaneID)
+
+	var planner Planner
+	err := plannerCollection.FindOne(ctx, bson.M{"lanes.id": laneID}).Decode(&planner)
+	if err != nil {
+		return err
+	}
+
+	var source *PlannerLane
+	var target *PlannerLane
+	for i := range planner.Lanes {
+		if planner.Lanes[i].ID == laneID {
+			source = &planner.Lanes[i]
+		}
+		if planner.Lanes[i].ID == targetLaneID {
+			target = &planner.Lanes[i]
+		}
+	}
+	if source == nil || target == nil {
+		return fmt.Errorf("source or target lane not found")
+	}
+
+	// Merge cards
+	merged := append(target.Cards, source.Cards...)
+
+	// Update target lane with merged cards
+	_, err = plannerCollection.UpdateOne(ctx,
+		bson.M{"lanes.id": targetLaneID},
+		bson.M{"$set": bson.M{"lanes.$.cards": merged, "lanes.$.updated_at": time.Now()}},
+	)
+	if err != nil {
+		return err
+	}
+
+	// Remove source lane
+	_, err = plannerCollection.UpdateOne(ctx,
+		bson.M{"lanes.id": laneID},
+		bson.M{"$pull": bson.M{"lanes": bson.M{"id": laneID}}},
+	)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// HandleUnsplitLane handles PUT /planner/{id}/lane/{laneId}/unsplit
+func HandleUnsplitLane(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPut {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Extract lane IDs from path
+	path := r.URL.Path
+	parts := strings.Split(path, "/")
+	// /planner/{id}/lane/{laneId}/unsplit?target={targetLaneId}
+	if len(parts) != 6 || parts[1] != "planner" || parts[3] != "lane" || parts[5] != "unsplit" {
+		http.Error(w, "Invalid path", http.StatusBadRequest)
+		return
+	}
+	laneID := parts[4]
+	targetLaneID := r.URL.Query().Get("target")
+	if targetLaneID == "" {
+		http.Error(w, "target lane ID required", http.StatusBadRequest)
+		return
+	}
+
+	if err := UnsplitLane(r.Context(), laneID, targetLaneID); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // HandleAddLane handles POST /planner/{id}/lane
