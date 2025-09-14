@@ -47,7 +47,7 @@ func AddLane(ctx context.Context, plannerID, title, description, color string, p
 	return &lane, nil
 }
 
- // UpdateLane updates a lane's title and description in MongoDB
+// UpdateLane updates a lane's title and description in MongoDB
 func UpdateLane(ctx context.Context, laneID, title, description, color string) (*PlannerLane, error) {
 	log.Printf("Updating lane: id=%s, title=%s", laneID, title)
 
@@ -76,7 +76,7 @@ func UpdateLane(ctx context.Context, laneID, title, description, color string) (
 	return updatedLane, nil
 }
 
- // DeleteLane deletes a lane and all its cards in MongoDB
+// DeleteLane deletes a lane and all its cards in MongoDB
 func DeleteLane(ctx context.Context, laneID string) error {
 	log.Printf("Deleting lane: id=%s", laneID)
 
@@ -89,7 +89,7 @@ func DeleteLane(ctx context.Context, laneID string) error {
 	return err
 }
 
- // ReorderLanes updates the positions of lanes in a planner
+// ReorderLanes updates the positions of lanes in a planner
 func ReorderLanes(ctx context.Context, plannerID string, laneIDs []string) error {
 	log.Printf("Reordering lanes: plannerID=%s, laneCount=%d", plannerID, len(laneIDs))
 
@@ -105,30 +105,81 @@ func ReorderLanes(ctx context.Context, plannerID string, laneIDs []string) error
 	return nil
 }
 
- // SplitLane splits a lane into two lanes in MongoDB
+// SplitLane splits a lane into two grouped lanes in MongoDB, redistributing cards
 func SplitLane(ctx context.Context, laneID, newTitle, newDescription, newColor string, splitPosition int) (*PlannerLane, error) {
 	log.Printf("Splitting lane: id=%s, newTitle=%s, splitPosition=%d", laneID, newTitle, splitPosition)
+
+	// Find the planner with the requested lane
+	var planner Planner
+	err := plannerCollection.FindOne(ctx, bson.M{"lanes.id": laneID}).Decode(&planner)
+	if err != nil {
+		return nil, err
+	}
+
+	// Locate the original lane
+	var originalLane *PlannerLane
+	for i := range planner.Lanes {
+		if planner.Lanes[i].ID == laneID {
+			originalLane = &planner.Lanes[i]
+			break
+		}
+	}
+	if originalLane == nil {
+		return nil, nil
+	}
+
+	// Determine template_lane_id
+	templateID := originalLane.TemplateLaneID
+	if templateID == "" {
+		templateID = originalLane.ID
+		// persist templateID on original
+		_, _ = plannerCollection.UpdateOne(ctx,
+			bson.M{"lanes.id": originalLane.ID},
+			bson.M{"$set": bson.M{"lanes.$.template_lane_id": templateID}},
+		)
+	}
+
+	// Split cards into two sets
+	cardsToKeep := []PlannerCard{}
+	cardsToMove := []PlannerCard{}
+	if splitPosition > len(originalLane.Cards) {
+		splitPosition = len(originalLane.Cards)
+	}
+	cardsToKeep = append(cardsToKeep, originalLane.Cards[:splitPosition]...)
+	cardsToMove = append(cardsToMove, originalLane.Cards[splitPosition:]...)
+
+	// Update original lane with kept cards
+	_, _ = plannerCollection.UpdateOne(ctx,
+		bson.M{"lanes.id": originalLane.ID},
+		bson.M{"$set": bson.M{
+			"lanes.$.cards":            cardsToKeep,
+			"lanes.$.template_lane_id": templateID,
+			"lanes.$.updated_at":       time.Now(),
+		}},
+	)
 
 	// Construct new lane
 	newLaneID := generateID()
 	newLane := PlannerLane{
-		ID:          newLaneID,
-		Title:       newTitle,
-		Description: newDescription,
-		Color:       newColor,
-		Position:    splitPosition + 1,
-		CreatedAt:   time.Now(),
-		UpdatedAt:   time.Now(),
-		Cards:       []PlannerCard{},
+		ID:             newLaneID,
+		PlannerID:      planner.ID,
+		Title:          newTitle,
+		Description:    newDescription,
+		Color:          newColor,
+		Position:       originalLane.Position + 1,
+		CreatedAt:      time.Now(),
+		UpdatedAt:      time.Now(),
+		Cards:          cardsToMove,
+		TemplateLaneID: templateID,
 	}
 	if newLane.Cards == nil {
 		newLane.Cards = []PlannerCard{}
 	}
 
-	// Push new lane into planner document containing laneID
-	_, err := plannerCollection.UpdateOne(
+	// Push new lane into planner document
+	_, err = plannerCollection.UpdateOne(
 		ctx,
-		bson.M{"lanes.id": laneID},
+		bson.M{"id": planner.ID},
 		bson.M{"$push": bson.M{"lanes": newLane}},
 	)
 	if err != nil {

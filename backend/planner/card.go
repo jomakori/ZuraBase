@@ -9,8 +9,11 @@ import (
 	"time"
 
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
+
+var cardHistoryCollection *mongo.Collection
 
 // AddCard adds a new card to a lane in MongoDB
 func AddCard(ctx context.Context, laneID, title, content string, position int) (*PlannerCard, error) {
@@ -41,16 +44,30 @@ func AddCard(ctx context.Context, laneID, title, content string, position int) (
 	return &card, nil
 }
 
- // GetCard retrieves a card by ID from MongoDB
+// GetCard retrieves a card by ID from MongoDB
 func GetCard(ctx context.Context, cardID string) (*PlannerCard, error) {
-	log.Printf("Getting card: id=%s", cardID)
+ log.Printf("Getting card: id=%s", cardID)
 
-	var result PlannerCard
-	err := plannerCollection.FindOne(ctx, bson.M{"lanes.cards.id": cardID}).Decode(&result)
-	if err != nil {
-		return nil, err
-	}
-	return &result, nil
+ pipeline := []bson.M{
+ 	{"$unwind": "$lanes"},
+ 	{"$unwind": "$lanes.cards"},
+ 	{"$match": bson.M{"lanes.cards.id": cardID}},
+ 	{"$replaceRoot": bson.M{"newRoot": "$lanes.cards"}},
+ }
+ cursor, err := plannerCollection.Aggregate(ctx, pipeline)
+ if err != nil {
+ 	return nil, err
+ }
+ defer cursor.Close(ctx)
+
+ if cursor.Next(ctx) {
+ 	var card PlannerCard
+ 	if err := cursor.Decode(&card); err != nil {
+ 		return nil, err
+ 	}
+ 	return &card, nil
+ }
+ return nil, mongo.ErrNoDocuments
 }
 
  // UpdateCard updates a card's title and content in MongoDB
@@ -120,42 +137,60 @@ func ReorderCards(ctx context.Context, laneID string, cardIDs []string) error {
 func MoveCard(ctx context.Context, cardID, newLaneID string, newPosition int) (*PlannerCard, error) {
 	log.Printf("Moving card: id=%s, newLaneID=%s, newPosition=%d", cardID, newLaneID, newPosition)
 
-	// Pull card from current lane
-	var card PlannerCard
-	err := plannerCollection.FindOneAndUpdate(
-		ctx,
-		bson.M{"lanes.cards.id": cardID},
-		bson.M{"$pull": bson.M{"lanes.$[].cards": bson.M{"id": cardID}}},
-	).Decode(&card)
+	// Fetch full card before moving
+	fullCard, err := GetCard(ctx, cardID)
 	if err != nil {
 		return nil, err
 	}
 
-	// Push card into new lane
-	card.LaneID = newLaneID
-	card.Position = newPosition
-	if card.Fields == nil {
-		card.Fields = map[string]interface{}{}
+	// Backup into history
+	if fullCard != nil && cardHistoryCollection != nil {
+		historyRecord := bson.M{
+			"card_id":   fullCard.ID,
+			"lane_id":   fullCard.LaneID,
+			"fields":    fullCard.Fields,
+			"position":  fullCard.Position,
+			"timestamp": time.Now(),
+		}
+		_, _ = cardHistoryCollection.InsertOne(ctx, historyRecord)
 	}
-	card.Fields["lane_id"] = newLaneID
-	card.UpdatedAt = time.Now()
 
+	// Remove from old lane
 	_, err = plannerCollection.UpdateOne(
 		ctx,
-		bson.M{"lanes.id": newLaneID},
-		bson.M{"$push": bson.M{"lanes.$.cards": card}},
+		bson.M{"lanes.cards.id": cardID},
+		bson.M{"$pull": bson.M{"lanes.$[].cards": bson.M{"id": cardID}}},
 	)
 	if err != nil {
 		return nil, err
 	}
-	// Ensure fields map is initialized
-	if card.Fields == nil {
-		card.Fields = map[string]interface{}{}
-	}
-	card.Fields["lane_id"] = newLaneID
-	card.Fields["moved_at"] = time.Now().Format(time.RFC3339)
 
-	return &card, nil
+	// Update lane + position
+	fullCard.LaneID = newLaneID
+	fullCard.Position = newPosition
+	fullCard.UpdatedAt = time.Now()
+	if fullCard.Fields == nil {
+		fullCard.Fields = map[string]interface{}{}
+	}
+	fullCard.Fields["lane_id"] = newLaneID
+	fullCard.Fields["moved_at"] = time.Now().Format(time.RFC3339)
+
+	// Insert into new lane
+	_, err = plannerCollection.UpdateOne(
+		ctx,
+		bson.M{"lanes.id": newLaneID},
+		bson.M{"$push": bson.M{"lanes.$.cards": fullCard}},
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	// Re-fetch authoritative card
+	updatedCard, err := GetCard(ctx, cardID)
+	if err != nil {
+		return nil, err
+	}
+	return updatedCard, nil
 }
 
 // HandleAddCard handles POST /planner/{id}/lane/{laneId}/card

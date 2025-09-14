@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   DragDropContext,
   Droppable,
@@ -41,6 +41,19 @@ const Board: React.FC<BoardProps> = ({
   const [isAddingLane, setIsAddingLane] = useState(false);
   const [newLaneTitle, setNewLaneTitle] = useState("");
   const [newLaneDescription, setNewLaneDescription] = useState("");
+  const [direction, setDirection] = useState<"horizontal" | "vertical">(
+    window.innerWidth < 640 ? "vertical" : "horizontal"
+  );
+
+  // Handle responsive direction change
+  useEffect(() => {
+    const handleResize = () => {
+      setDirection(window.innerWidth < 640 ? "vertical" : "horizontal");
+    };
+
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
 
   // Removed pendingSplit mechanism; handle splits directly
 
@@ -129,56 +142,33 @@ const Board: React.FC<BoardProps> = ({
       const originalLane = planner.lanes.find((l) => l.id === laneId);
       if (!originalLane) return;
 
-      // Create new lane with proper position
-      const newLanePosition = originalLane.position + 1;
-      const newLane = await addLane(
+      // Use backend splitLane API instead of client-side hack
+      const newLane = await splitLane(
         planner.id,
+        laneId,
         newTitle,
         newDescription,
-        newLanePosition,
+        splitPosition,
         newColor
       );
 
-      // Move cards from original lane to new lane (client-side redistribution)
-      const cardsToMove = originalLane.cards.slice(splitPosition);
+      // Update planner with new and original lane grouping
+      const updatedLanes = planner.lanes.map((lane) =>
+        lane.id === laneId
+          ? {
+              ...lane,
+              cards: lane.cards.slice(0, splitPosition),
+              template_lane_id: lane.template_lane_id || lane.id,
+            }
+          : lane
+      );
 
-      // Update original lane to remove moved cards
-      const updatedOriginalLane = {
-        ...originalLane,
-        cards: originalLane.cards.slice(0, splitPosition),
-      };
-
-      // Add moved cards to new lane
-      const updatedNewLane = {
-        ...newLane,
-        cards: cardsToMove,
-      };
-
-      // Update all lanes with new positions
-      const updatedLanes = planner.lanes.map((lane) => {
-        if (lane.id === laneId) return updatedOriginalLane;
-        // Shift positions for lanes after the original lane
-        if (lane.position > originalLane.position) {
-          return { ...lane, position: lane.position + 1 };
-        }
-        return lane;
-      });
-
-      // Insert the new lane at the correct position
-      updatedLanes.splice(originalLane.position + 1, 0, updatedNewLane);
+      const insertIndex = originalLane.position + 1;
+      updatedLanes.splice(insertIndex, 0, newLane);
 
       onPlannerUpdate({
         ...planner,
         lanes: updatedLanes,
-      });
-
-      // Move cards to new lane in backend (async, won't block UI)
-      cardsToMove.forEach(async (card, index) => {
-        try {
-          await moveCard(planner.id, card.id, newLane.id, index);
-        } catch (error) {
-          console.error("Failed to move card during split:", error);
-        }
       });
     } catch (error) {
       console.error("Failed to split lane:", error);
@@ -303,6 +293,16 @@ const Board: React.FC<BoardProps> = ({
         newPosition
       );
 
+      // Preserve fields from existing card if missing
+      const existingCard = planner.lanes
+        .flatMap((l) => l.cards)
+        .find((c) => c.id === cardId);
+      const mergedCard = {
+        ...existingCard,
+        ...movedCard,
+        fields: movedCard.fields || existingCard?.fields || {},
+      };
+
       onPlannerUpdate({
         ...planner,
         lanes: planner.lanes.map((lane) => {
@@ -316,7 +316,7 @@ const Board: React.FC<BoardProps> = ({
           // If it's the target lane, insert card at correct position
           if (lane.id === newLaneId) {
             const newCards = [...lane.cards];
-            newCards.splice(newPosition, 0, movedCard);
+            newCards.splice(newPosition, 0, mergedCard);
             return {
               ...lane,
               cards: newCards,
@@ -354,6 +354,45 @@ const Board: React.FC<BoardProps> = ({
       if (type === "lane") {
         const newOrder = Array.from(planner.lanes);
         const [removed] = newOrder.splice(source.index, 1);
+
+        // Find the dragged lane
+        const laneId = draggableId.startsWith("lane-")
+          ? draggableId.replace(/^lane-/, "")
+          : draggableId;
+        const draggedLane = planner.lanes.find((l) => l.id === laneId);
+        if (!draggedLane) {
+          console.error("Dragged lane not found");
+          return;
+        }
+
+        // Check if this is a split lane (has a template_lane_id)
+        // If so, we need to keep all lanes with the same template_lane_id together
+        if (draggedLane.template_lane_id) {
+          // Find all lanes with the same template_lane_id
+          const relatedLanes = planner.lanes.filter(
+            (l) =>
+              l.template_lane_id === draggedLane.template_lane_id &&
+              l.id !== draggedLane.id
+          );
+
+          // If there are related lanes, we need to move them together
+          if (relatedLanes.length > 0) {
+            // Remove all related lanes from their current positions
+            const relatedLaneIndices = relatedLanes
+              .map((l) => newOrder.findIndex((nl) => nl.id === l.id))
+              .sort((a, b) => b - a); // Sort in descending order to remove from end first
+
+            const removedRelatedLanes = relatedLaneIndices.map((idx) => {
+              const [lane] = newOrder.splice(idx, 1);
+              return lane;
+            });
+
+            // Insert all related lanes after the dragged lane
+            newOrder.splice(destination.index + 1, 0, ...removedRelatedLanes);
+          }
+        }
+
+        // Insert the dragged lane at the destination
         newOrder.splice(destination.index, 0, removed);
 
         // Update UI optimistically first
@@ -364,9 +403,8 @@ const Board: React.FC<BoardProps> = ({
           planner.id,
           newOrder.map((l) => l.id)
         );
-        
-        console.log("Lane reorder successful");
 
+        console.log("Lane reorder successful");
       } else if (type === "card") {
         const sourceLane = planner.lanes.find(
           (l) => l.id === source.droppableId
@@ -374,7 +412,7 @@ const Board: React.FC<BoardProps> = ({
         const destLane = planner.lanes.find(
           (l) => l.id === destination.droppableId
         );
-        
+
         if (!sourceLane || !destLane) {
           console.error("Source or destination lane not found");
           return;
@@ -388,6 +426,7 @@ const Board: React.FC<BoardProps> = ({
 
         const sourceCards = Array.from(sourceLane.cards);
         const [moved] = sourceCards.splice(source.index, 1);
+        const cardId = draggableId.replace(/^card-/, "");
 
         if (sourceLane.id === destLane.id) {
           // Reordering within the same lane
@@ -407,61 +446,57 @@ const Board: React.FC<BoardProps> = ({
             sourceLane.id,
             sourceCards.map((c) => c.id)
           );
-          
-          console.log("Card reorder within lane successful");
 
+          console.log("Card reorder within lane successful");
         } else {
           // Moving between lanes
-          const destCards = Array.from(destLane.cards);
-          destCards.splice(destination.index, 0, moved);
-
-          // Update UI optimistically first
-          onPlannerUpdate({
-            ...planner,
-            lanes: planner.lanes.map((l) => {
-              if (l.id === sourceLane.id) return { ...l, cards: sourceCards };
-              if (l.id === destLane.id) return { ...l, cards: destCards };
-              return l;
-            }),
-          });
-
-          // Then persist to backend
-          await moveCard(planner.id, moved.id, destLane.id, destination.index);
-          
+          // Use helper to ensure consistent state + backend update
+          const cardId = draggableId.startsWith("card-")
+            ? draggableId.replace(/^card-/, "")
+            : draggableId;
+          await handleMoveCard(cardId, destLane.id, destination.index);
           console.log("Card move between lanes successful");
         }
       }
     } catch (error) {
       console.error("Failed to persist drag and drop changes:", error);
-      
+
       // Revert to original state on error
       onPlannerUpdate(originalPlannerState);
-      
+
       // Show user feedback (could be enhanced with toast notifications)
       alert("Failed to save changes. Please try again.");
     }
   };
 
+  // Use original planner.lanes order for now to avoid disappearing lanes
+  const orderedLanes = planner.lanes;
+
   return (
-    <DragDropContext onDragEnd={onDragEnd}>
+    <DragDropContext onDragEnd={onDragEnd} enableDefaultSensors={true}>
       {/* @ts-ignore */}
-      <Droppable droppableId="all-lanes" type="lane" direction="horizontal">
+      <Droppable droppableId="all-lanes" type="lane" direction={direction}>
         {(provided: any, snapshot: any) =>
           (
             <div
-              className="flex flex-nowrap gap-4 pb-4 h-full items-start overflow-x-auto"
+              className="flex flex-col sm:flex-row flex-nowrap gap-4 pb-4 h-full items-stretch overflow-y-auto sm:overflow-x-auto sm:overflow-y-hidden w-full border rounded-lg p-4 justify-center"
+              style={{ borderColor: "#E5E7EB" }}
               ref={provided.innerRef}
               {...provided.droppableProps}
             >
-              {planner.lanes.map((lane, index) => (
-                <Draggable key={lane.id} draggableId={lane.id} index={index}>
+              {orderedLanes.map((lane, index) => (
+                <Draggable
+                  key={`lane-${lane.id}`}
+                  draggableId={`lane-${lane.id}`}
+                  index={index}
+                >
                   {(laneProvided: any) =>
                     (
                       <div
                         ref={laneProvided.innerRef}
                         {...laneProvided.draggableProps}
                         {...laneProvided.dragHandleProps}
-                        className="h-full min-w-[280px]"
+                        className="w-full sm:w-auto sm:h-full min-h-[200px] sm:min-h-0 sm:min-w-[280px] sm:max-w-[350px]"
                       >
                         <Lane
                           lane={{
@@ -493,7 +528,7 @@ const Board: React.FC<BoardProps> = ({
               ))}
               {provided.placeholder as any}
               {/* Add Lane Form */}
-              <div className="min-w-[280px]">
+              <div className="w-full sm:w-auto sm:min-w-[280px] sm:max-w-[350px] min-h-[200px] sm:min-h-0">
                 {isAddingLane ? (
                   <div className="bg-white p-4 rounded-lg shadow border-2 border-dashed border-gray-300">
                     <input

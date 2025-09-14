@@ -601,13 +601,13 @@ const PlannerApp: React.FC = () => {
       )}
 
       {/* Main Content */}
-      <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8 h-[calc(100vh-64px)]">
+      <main className="mx-auto w-full px-2 py-4 sm:px-6 lg:px-8 h-[calc(100vh-64px)] overflow-hidden flex flex-col">
         {isLoading ? (
           <div className="flex items-center justify-center h-full">
             <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
           </div>
         ) : planner ? (
-          <div className="h-full">
+          <div className="h-full flex-grow overflow-hidden">
             {/* Display a message if we're using a temporary planner */}
             {planner.id.toString().startsWith("temp-") && (
               <div className="bg-yellow-50 border border-yellow-200 rounded p-4 mb-4">

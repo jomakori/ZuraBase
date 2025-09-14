@@ -11,6 +11,7 @@ import (
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
+	"sort"
 )
 
 // Planner represents a Markdown-based planning board
@@ -115,6 +116,16 @@ func CreatePlanner(ctx context.Context, title, description, templateID string) (
  	}
  	if planner.Columns == nil {
  		planner.Columns = []PlannerColumn{}
+ 	}
+ 
+ 	// Sort lanes and cards by position
+ 	sort.Slice(planner.Lanes, func(i, j int) bool {
+ 		return planner.Lanes[i].Position < planner.Lanes[j].Position
+ 	})
+ 	for i := range planner.Lanes {
+ 		sort.Slice(planner.Lanes[i].Cards, func(a, b int) bool {
+ 			return planner.Lanes[i].Cards[a].Position < planner.Lanes[i].Cards[b].Position
+ 		})
  	}
  
  	log.Printf("GetPlanner: Returning planner with %d lanes and %d columns", len(planner.Lanes), len(planner.Columns))

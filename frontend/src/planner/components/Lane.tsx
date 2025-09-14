@@ -66,6 +66,7 @@ const Lane: React.FC<LaneProps> = ({
   const [isSplittingLane, setIsSplittingLane] = useState(false);
   const [splitTitle, setSplitTitle] = useState("");
   const [splitColor, setSplitColor] = useState("#60A5FA");
+  const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
 
   const handleSaveLane = () => {
     onUpdateLane(lane.id, title, description, lane.color);
@@ -74,7 +75,9 @@ const Lane: React.FC<LaneProps> = ({
 
   const handleAddCard = () => {
     if (newCardTitle.trim()) {
-      onAddCard(lane.id, newCardTitle, newCardContent, lane.cards?.length ?? 0);
+      // Ensure content is never empty to avoid default template
+      const cardContent = newCardContent.trim() || " ";
+      onAddCard(lane.id, newCardTitle, cardContent, lane.cards?.length ?? 0);
       setNewCardTitle("");
       setNewCardContent("");
       setIsAddingCard(false);
@@ -99,11 +102,19 @@ const Lane: React.FC<LaneProps> = ({
 
   return (
     <div
-      className="rounded-lg p-3 w-full min-w-[260px] flex-shrink-0 max-h-full flex flex-col border-2"
+      className={`rounded-lg p-3 w-full sm:min-w-[260px] flex-shrink-0 sm:max-h-full flex flex-col border-2 ${
+        lane.template_lane_id ? "split-lane" : ""
+      }`}
       style={{
         borderColor: lane.color || "#E5E7EB",
         backgroundColor: "#FAFAFA",
+        // Add a subtle left border to indicate split lanes
+        ...(lane.template_lane_id && {
+          borderLeft: `4px solid ${lane.color || "#E5E7EB"}`,
+          boxShadow: "0 0 5px rgba(0,0,0,0.1)",
+        }),
       }}
+      data-lane-group={lane.template_lane_id || lane.id} // Add data attribute for lane grouping
     >
       {/* Lane Header */}
       {isEditing ? (
@@ -139,8 +150,9 @@ const Lane: React.FC<LaneProps> = ({
         </div>
       ) : (
         <div
-          className="flex justify-between items-center mb-3 px-2 py-1 rounded"
+          className="flex justify-between items-center mb-3 px-2 py-1 rounded cursor-pointer"
           style={{ backgroundColor: lane.color || "#E5E7EB" }}
+          onDoubleClick={() => setIsEditing(true)}
         >
           <div className="flex-1">
             <h3 className="font-bold text-white">{lane.title}</h3>
@@ -158,7 +170,11 @@ const Lane: React.FC<LaneProps> = ({
             >
               {collapsed ? <CaretRight size={16} /> : <CaretDown size={16} />}
             </button>
-            <div {...dragHandleProps} className="cursor-grab" onClick={(e) => e.stopPropagation()}>
+            <div
+              {...dragHandleProps}
+              className="cursor-grab"
+              onClick={(e) => e.stopPropagation()}
+            >
               <DotsSixVertical size={16} />
             </div>
             {/* Custom Color Picker */}
@@ -231,17 +247,29 @@ const Lane: React.FC<LaneProps> = ({
         >
           {/* Original half */}
           <div className="flex-1 p-2 bg-gray-50 rounded border">
-            {(
-              lane.cards?.slice(0, Math.floor((lane.cards?.length ?? 0) / 2)) ||
-              []
-            ).map((card) => (
-              <div
-                key={card.id}
-                className="bg-white p-1 mb-1 rounded shadow text-xs"
-              >
-                {(card.fields?.title as string) || "Untitled"}
-              </div>
-            ))}
+            {(() => {
+              // Calculate split position based on selected card or default to middle
+              let splitPosition = Math.floor((lane.cards?.length ?? 0) / 2);
+
+              if (selectedCardId) {
+                const selectedCardIndex =
+                  lane.cards?.findIndex((c) => c.id === selectedCardId) ?? -1;
+                if (selectedCardIndex >= 0) {
+                  splitPosition = selectedCardIndex;
+                }
+              }
+
+              return (lane.cards?.slice(0, splitPosition) || []).map((card) => (
+                <div
+                  key={card.id}
+                  className={`bg-white p-1 mb-1 rounded shadow text-xs ${
+                    card.id === selectedCardId ? "border-2 border-blue-500" : ""
+                  }`}
+                >
+                  {(card.fields?.title as string) || "Untitled"}
+                </div>
+              ));
+            })()}
           </div>
           {/* New half (form) */}
           <div className="flex-1 p-2 bg-white rounded border shadow space-y-2">
@@ -274,14 +302,23 @@ const Lane: React.FC<LaneProps> = ({
               </button>
               <button
                 onClick={() => {
-                  onSplitLane(
-                    lane.id,
-                    splitTitle,
-                    "",
-                    Math.floor((lane.cards?.length ?? 0) / 2),
-                    splitColor
-                  );
+                  // Get the selected card index if any card is selected
+                  let splitIndex = Math.floor((lane.cards?.length ?? 0) / 2); // Default to middle
+
+                  // If a card is selected, use its position as the split point
+                  if (selectedCardId) {
+                    const selectedCardIndex =
+                      lane.cards?.findIndex((c) => c.id === selectedCardId) ??
+                      -1;
+                    if (selectedCardIndex >= 0) {
+                      splitIndex = selectedCardIndex;
+                    }
+                  }
+
+                  // Use empty string for description to avoid null issues
+                  onSplitLane(lane.id, splitTitle, "", splitIndex, splitColor);
                   setIsSplittingLane(false);
+                  setSelectedCardId(null); // Clear selection after split
                 }}
                 className="text-green-600 hover:text-green-800"
                 title="Confirm"
@@ -301,7 +338,7 @@ const Lane: React.FC<LaneProps> = ({
             {/* @ts-ignore */}
             {(droppableProvided, droppableSnapshot) => (
               <div
-                className={`overflow-y-auto flex-1 space-y-2 min-h-[50px] transition-colors duration-200 ${
+                className={`flex-1 space-y-2 min-h-[50px] transition-colors duration-200 ${
                   droppableSnapshot.isDraggingOver
                     ? "bg-blue-50 rounded border-2 border-dashed border-blue-300"
                     : ""
@@ -324,6 +361,12 @@ const Lane: React.FC<LaneProps> = ({
                           card={card}
                           onUpdate={onUpdateCard}
                           onDelete={onDeleteCard}
+                          onSelect={(cardId) =>
+                            setSelectedCardId(
+                              cardId === selectedCardId ? null : cardId
+                            )
+                          }
+                          isSelected={selectedCardId === card.id}
                         />
                       </div>
                     )}
