@@ -3,6 +3,7 @@ package planner
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"strings"
@@ -15,10 +16,30 @@ import (
 
 var cardHistoryCollection *mongo.Collection
 
-// AddCard adds a new card to a lane in MongoDB
+// AddCard adds a new card to a lane in MongoDB at the specified position
 func AddCard(ctx context.Context, laneID, title, content string, position int) (*PlannerCard, error) {
 	log.Printf("Adding card: laneID=%s, title=%s, position=%d", laneID, title, position)
 
+	// First, get the current lane to determine proper positioning
+	var planner Planner
+	err := plannerCollection.FindOne(ctx, bson.M{"lanes.id": laneID}).Decode(&planner)
+	if err != nil {
+		return nil, err
+	}
+
+	// Find the lane
+	var lane *PlannerLane
+	for i := range planner.Lanes {
+		if planner.Lanes[i].ID == laneID {
+			lane = &planner.Lanes[i]
+			break
+		}
+	}
+	if lane == nil {
+		return nil, fmt.Errorf("lane not found: %s", laneID)
+	}
+
+	// Create the new card
 	cardID := generateID()
 	card := PlannerCard{
 		ID:        cardID,
@@ -32,8 +53,25 @@ func AddCard(ctx context.Context, laneID, title, content string, position int) (
 		UpdatedAt: time.Now(),
 	}
 
-	// push card into lane document
-	_, err := plannerCollection.UpdateOne(
+	// Shift positions of existing cards to make room for the new card
+	for i := range lane.Cards {
+		if lane.Cards[i].Position >= position {
+			_, err := plannerCollection.UpdateOne(
+				ctx,
+				bson.M{"lanes.id": laneID, "lanes.cards.id": lane.Cards[i].ID},
+				bson.M{"$inc": bson.M{"lanes.$[].cards.$[elem].position": 1}},
+				options.Update().SetArrayFilters(options.ArrayFilters{
+					Filters: []interface{}{bson.M{"elem.id": lane.Cards[i].ID}},
+				}),
+			)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	// Insert the new card
+	_, err = plannerCollection.UpdateOne(
 		ctx,
 		bson.M{"lanes.id": laneID},
 		bson.M{"$push": bson.M{"lanes.$.cards": card}},
@@ -133,54 +171,92 @@ func ReorderCards(ctx context.Context, laneID string, cardIDs []string) error {
 	return nil
 }
 
- // MoveCard moves a card to a different lane in MongoDB
-func MoveCard(ctx context.Context, cardID, newLaneID string, newPosition int) (*PlannerCard, error) {
-	log.Printf("Moving card: id=%s, newLaneID=%s, newPosition=%d", cardID, newLaneID, newPosition)
-
-	// Fetch full card before moving
-	fullCard, err := GetCard(ctx, cardID)
-	if err != nil {
-		return nil, err
-	}
-
-	// Backup into history
-	if fullCard != nil && cardHistoryCollection != nil {
-		historyRecord := bson.M{
-			"card_id":   fullCard.ID,
-			"lane_id":   fullCard.LaneID,
-			"fields":    fullCard.Fields,
-			"position":  fullCard.Position,
-			"timestamp": time.Now(),
-		}
-		_, _ = cardHistoryCollection.InsertOne(ctx, historyRecord)
-	}
-
-	// Remove from old lane
-	_, err = plannerCollection.UpdateOne(
-		ctx,
-		bson.M{"lanes.cards.id": cardID},
-		bson.M{"$pull": bson.M{"lanes.$[].cards": bson.M{"id": cardID}}},
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	// Update lane + position
-	fullCard.LaneID = newLaneID
-	fullCard.Position = newPosition
-	fullCard.UpdatedAt = time.Now()
-	if fullCard.Fields == nil {
-		fullCard.Fields = map[string]interface{}{}
-	}
-	fullCard.Fields["lane_id"] = newLaneID
-	fullCard.Fields["moved_at"] = time.Now().Format(time.RFC3339)
-
-	// Insert into new lane
-	_, err = plannerCollection.UpdateOne(
-		ctx,
-		bson.M{"lanes.id": newLaneID},
-		bson.M{"$push": bson.M{"lanes.$.cards": fullCard}},
-	)
+ // MoveCard moves a card to a different lane in MongoDB with position-aware insertion
+ func MoveCard(ctx context.Context, cardID, newLaneID string, newPosition int) (*PlannerCard, error) {
+ 	log.Printf("Moving card: id=%s, newLaneID=%s, newPosition=%d", cardID, newLaneID, newPosition)
+ 
+ 	// Fetch full card before moving
+ 	fullCard, err := GetCard(ctx, cardID)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+ 
+ 	// Store original lane ID in the card history
+ 
+ 	// Backup into history
+ 	if fullCard != nil && cardHistoryCollection != nil {
+ 		historyRecord := bson.M{
+ 			"card_id":   fullCard.ID,
+ 			"lane_id":   fullCard.LaneID,
+ 			"fields":    fullCard.Fields,
+ 			"position":  fullCard.Position,
+ 			"timestamp": time.Now(),
+ 		}
+ 		_, _ = cardHistoryCollection.InsertOne(ctx, historyRecord)
+ 	}
+ 
+ 	// Get the target lane to determine proper positioning
+ 	var planner Planner
+ 	err = plannerCollection.FindOne(ctx, bson.M{"lanes.id": newLaneID}).Decode(&planner)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+ 
+ 	// Find the target lane
+ 	var targetLane *PlannerLane
+ 	for i := range planner.Lanes {
+ 		if planner.Lanes[i].ID == newLaneID {
+ 			targetLane = &planner.Lanes[i]
+ 			break
+ 		}
+ 	}
+ 	if targetLane == nil {
+ 		return nil, fmt.Errorf("target lane not found: %s", newLaneID)
+ 	}
+ 
+ 	// Shift positions of existing cards in the target lane to make room
+ 	for i := range targetLane.Cards {
+ 		if targetLane.Cards[i].Position >= newPosition {
+ 			_, err := plannerCollection.UpdateOne(
+ 				ctx,
+ 				bson.M{"lanes.id": newLaneID, "lanes.cards.id": targetLane.Cards[i].ID},
+ 				bson.M{"$inc": bson.M{"lanes.$[].cards.$[elem].position": 1}},
+ 				options.Update().SetArrayFilters(options.ArrayFilters{
+ 					Filters: []interface{}{bson.M{"elem.id": targetLane.Cards[i].ID}},
+ 				}),
+ 			)
+ 			if err != nil {
+ 				return nil, err
+ 			}
+ 		}
+ 	}
+ 
+ 	// Remove from old lane
+ 	_, err = plannerCollection.UpdateOne(
+ 		ctx,
+ 		bson.M{"lanes.cards.id": cardID},
+ 		bson.M{"$pull": bson.M{"lanes.$[].cards": bson.M{"id": cardID}}},
+ 	)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+ 
+ 	// Update lane + position
+ 	fullCard.LaneID = newLaneID
+ 	fullCard.Position = newPosition
+ 	fullCard.UpdatedAt = time.Now()
+ 	if fullCard.Fields == nil {
+ 		fullCard.Fields = map[string]interface{}{}
+ 	}
+ 	fullCard.Fields["lane_id"] = newLaneID
+ 	fullCard.Fields["moved_at"] = time.Now().Format(time.RFC3339)
+ 
+ 	// Insert into new lane
+ 	_, err = plannerCollection.UpdateOne(
+ 		ctx,
+ 		bson.M{"lanes.id": newLaneID},
+ 		bson.M{"$push": bson.M{"lanes.$.cards": fullCard}},
+ 	)
 	if err != nil {
 		return nil, err
 	}

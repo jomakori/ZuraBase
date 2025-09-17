@@ -3,19 +3,26 @@ package planner
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
-
-	"fmt"
 
 	"go.mongodb.org/mongo-driver/bson"
 )
 
-// AddLane adds a new lane to a planner document in MongoDB
+// AddLane adds a new lane to a planner document in MongoDB with position-aware insertion
 func AddLane(ctx context.Context, plannerID, title, description, color string, position int) (*PlannerLane, error) {
 	log.Printf("Adding lane: plannerID=%s, title=%s, position=%d", plannerID, title, position)
+
+	// First, get the current planner to determine proper positioning
+	var planner Planner
+	err := plannerCollection.FindOne(ctx, bson.M{"id": plannerID}).Decode(&planner)
+	if err != nil {
+		return nil, err
+	}
 
 	laneID := generateID()
 	lane := PlannerLane{
@@ -33,10 +40,24 @@ func AddLane(ctx context.Context, plannerID, title, description, color string, p
 		lane.Cards = []PlannerCard{}
 	}
 
-	log.Printf("AddLane: Pushing lane with ID=%s, Cards=%v (len=%d)", laneID, lane.Cards, len(lane.Cards))
+	log.Printf("AddLane: Adding lane with ID=%s at position %d", laneID, position)
 
-	// push lane into planner document
-	_, err := plannerCollection.UpdateOne(
+	// Shift positions of existing lanes to make room for the new lane
+	for i := range planner.Lanes {
+		if planner.Lanes[i].Position >= position {
+			_, err := plannerCollection.UpdateOne(
+				ctx,
+				bson.M{"id": plannerID, "lanes.id": planner.Lanes[i].ID},
+				bson.M{"$inc": bson.M{"lanes.$.position": 1}},
+			)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	// Insert the new lane
+	_, err = plannerCollection.UpdateOne(
 		ctx,
 		bson.M{"id": plannerID},
 		bson.M{"$push": bson.M{"lanes": lane}},
@@ -107,7 +128,7 @@ func ReorderLanes(ctx context.Context, plannerID string, laneIDs []string) error
 	return nil
 }
 
-// SplitLane splits a lane into two grouped lanes in MongoDB, redistributing cards
+// SplitLane splits a lane into two grouped lanes in MongoDB, redistributing cards atomically
 func SplitLane(ctx context.Context, laneID, newTitle, newDescription, newColor string, splitPosition int) (*PlannerLane, error) {
 	log.Printf("Splitting lane: id=%s, newTitle=%s, splitPosition=%d", laneID, newTitle, splitPosition)
 
@@ -127,18 +148,13 @@ func SplitLane(ctx context.Context, laneID, newTitle, newDescription, newColor s
 		}
 	}
 	if originalLane == nil {
-		return nil, nil
+		return nil, fmt.Errorf("original lane not found: %s", laneID)
 	}
 
 	// Determine template_lane_id
 	templateID := originalLane.TemplateLaneID
 	if templateID == "" {
 		templateID = originalLane.ID
-		// persist templateID on original
-		_, _ = plannerCollection.UpdateOne(ctx,
-			bson.M{"lanes.id": originalLane.ID},
-			bson.M{"$set": bson.M{"lanes.$.template_lane_id": templateID}},
-		)
 	}
 
 	// Split cards into two sets
@@ -149,16 +165,6 @@ func SplitLane(ctx context.Context, laneID, newTitle, newDescription, newColor s
 	}
 	cardsToKeep = append(cardsToKeep, originalLane.Cards[:splitPosition]...)
 	cardsToMove = append(cardsToMove, originalLane.Cards[splitPosition:]...)
-
-	// Update original lane with kept cards
-	_, _ = plannerCollection.UpdateOne(ctx,
-		bson.M{"lanes.id": originalLane.ID},
-		bson.M{"$set": bson.M{
-			"lanes.$.cards":            cardsToKeep,
-			"lanes.$.template_lane_id": templateID,
-			"lanes.$.updated_at":       time.Now(),
-		}},
-	)
 
 	// Construct new lane
 	newLaneID := generateID()
@@ -178,36 +184,61 @@ func SplitLane(ctx context.Context, laneID, newTitle, newDescription, newColor s
 		newLane.Cards = []PlannerCard{}
 	}
 
-	// Push new lane into planner document
-	_, err = plannerCollection.UpdateOne(
-		ctx,
-		bson.M{"id": planner.ID},
-		bson.M{"$push": bson.M{"lanes": newLane}},
+	// Find all lanes with the same template_lane_id to ensure they stay contiguous
+	relatedLanes := []PlannerLane{}
+	for i := range planner.Lanes {
+		if planner.Lanes[i].TemplateLaneID == templateID && planner.Lanes[i].ID != laneID {
+			relatedLanes = append(relatedLanes, planner.Lanes[i])
+		}
+	}
+
+	// Sort related lanes by position
+	sort.Slice(relatedLanes, func(i, j int) bool {
+		return relatedLanes[i].Position < relatedLanes[j].Position
+	})
+
+	// Calculate the insertion position for the new lane
+	insertPosition := originalLane.Position + 1
+
+	// Shift all lanes after the insertion position
+	for i := range planner.Lanes {
+		if planner.Lanes[i].Position >= insertPosition &&
+		   planner.Lanes[i].ID != laneID &&
+		   (planner.Lanes[i].TemplateLaneID != templateID || planner.Lanes[i].TemplateLaneID == "") {
+			_, err := plannerCollection.UpdateOne(ctx,
+				bson.M{"lanes.id": planner.Lanes[i].ID},
+				bson.M{"$inc": bson.M{"lanes.$.position": 1}},
+			)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	// Update original lane with kept cards and ensure template_lane_id is set
+	_, err = plannerCollection.UpdateOne(ctx,
+		bson.M{"lanes.id": originalLane.ID},
+		bson.M{"$set": bson.M{
+			"lanes.$.cards":            cardsToKeep,
+			"lanes.$.template_lane_id": templateID,
+			"lanes.$.updated_at":       time.Now(),
+		}},
 	)
 	if err != nil {
 		return nil, err
 	}
 
-	// Reorder lanes so new lane appears immediately after the original
-	for i := range planner.Lanes {
-		if planner.Lanes[i].ID == originalLane.ID {
-			newLane.Position = planner.Lanes[i].Position + 1
-		}
-	}
-	// Shift subsequent lanes
-	for i := range planner.Lanes {
-		if planner.Lanes[i].Position >= newLane.Position {
-			_, _ = plannerCollection.UpdateOne(ctx,
-				bson.M{"lanes.id": planner.Lanes[i].ID},
-				bson.M{"$inc": bson.M{"lanes.$.position": 1}},
-			)
-		}
-	}
+	// Insert the new lane
+	_, err = plannerCollection.UpdateOne(
+		ctx,
+		bson.M{"id": planner.ID},
+		bson.M{"$push": bson.M{"lanes": newLane}},
+	)
 
 	return &newLane, nil
 }
  
-// UnsplitLane merges a lane back into a target lane and removes the lane
+// UnsplitLane merges a lane back into a target lane and removes the lane, reindexing cards
 func UnsplitLane(ctx context.Context, laneID, targetLaneID string) error {
 	log.Printf("UnsplitLane: merging lane %s into lane %s", laneID, targetLaneID)
 
@@ -231,8 +262,21 @@ func UnsplitLane(ctx context.Context, laneID, targetLaneID string) error {
 		return fmt.Errorf("source or target lane not found")
 	}
 
-	// Merge cards
-	merged := append(target.Cards, source.Cards...)
+	// Merge cards and reindex positions
+	merged := append([]PlannerCard{}, target.Cards...)
+	
+	// Add source cards with updated positions
+	for i, card := range source.Cards {
+		card.Position = len(target.Cards) + i
+		card.LaneID = targetLaneID
+		card.UpdatedAt = time.Now()
+		merged = append(merged, card)
+	}
+
+	// Sort merged cards by position
+	sort.Slice(merged, func(i, j int) bool {
+		return merged[i].Position < merged[j].Position
+	})
 
 	// Update target lane with merged cards
 	_, err = plannerCollection.UpdateOne(ctx,

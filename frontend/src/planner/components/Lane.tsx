@@ -348,7 +348,11 @@ const Lane: React.FC<LaneProps> = ({
               >
                 {lane.cards?.map((card, idx) => (
                   /* @ts-ignore */
-                  <Draggable key={card.id} draggableId={card.id} index={idx}>
+                  <Draggable
+                    key={card.id}
+                    draggableId={`card-${card.id}`}
+                    index={idx}
+                  >
                     {/* @ts-ignore */}
                     {(draggableProvided, draggableSnapshot) => (
                       <div

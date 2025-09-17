@@ -60,17 +60,30 @@ const Board: React.FC<BoardProps> = ({
   const handleAddLane = async () => {
     if (newLaneTitle.trim()) {
       try {
+        // Calculate the position for the new lane (end of the board)
+        const position =
+          planner.lanes.length > 0
+            ? Math.max(...planner.lanes.map((lane) => lane.position)) + 1
+            : 0;
+
         const newLane = await addLane(
           planner.id,
           newLaneTitle,
           newLaneDescription,
-          planner.lanes.length // Add to the end of the board
+          position
         );
 
         // Update the planner with the new lane
+        const updatedLanes = [...planner.lanes, newLane];
+
+        // Sort lanes by position to ensure consistent ordering
+        const sortedLanes = updatedLanes.sort(
+          (a, b) => a.position - b.position
+        );
+
         onPlannerUpdate({
           ...planner,
-          lanes: [...planner.lanes, newLane],
+          lanes: sortedLanes,
         });
 
         // Reset form
@@ -163,12 +176,53 @@ const Board: React.FC<BoardProps> = ({
           : lane
       );
 
-      const insertIndex = originalLane.position + 1;
-      updatedLanes.splice(insertIndex, 0, newLane);
+      // Add the new lane
+      updatedLanes.push(newLane);
+
+      // Group lanes by template_lane_id
+      const groups: { [key: string]: PlannerLane[] } = {};
+      updatedLanes.forEach((lane) => {
+        const groupId = lane.template_lane_id || lane.id;
+        if (!groups[groupId]) groups[groupId] = [];
+        groups[groupId].push(lane);
+      });
+
+      // Sort each group internally by position
+      Object.values(groups).forEach((group) => {
+        group.sort((a, b) => a.position - b.position);
+      });
+
+      // Flatten the groups back to a lane array and ensure contiguous positions
+      const sortedLanes: PlannerLane[] = [];
+      let position = 0;
+
+      // First, add non-grouped lanes
+      updatedLanes
+        .filter(
+          (lane) => !lane.template_lane_id || lane.template_lane_id === lane.id
+        )
+        .sort((a, b) => a.position - b.position)
+        .forEach((lane) => {
+          const groupId = lane.template_lane_id || lane.id;
+          const group = groups[groupId] || [];
+
+          // Add the parent lane first
+          lane.position = position++;
+          sortedLanes.push(lane);
+
+          // Then add all child lanes
+          group
+            .filter((l) => l.id !== lane.id && l.template_lane_id === groupId)
+            .sort((a, b) => a.position - b.position)
+            .forEach((childLane) => {
+              childLane.position = position++;
+              sortedLanes.push(childLane);
+            });
+        });
 
       onPlannerUpdate({
         ...planner,
-        lanes: updatedLanes,
+        lanes: sortedLanes,
       });
     } catch (error) {
       console.error("Failed to split lane:", error);
@@ -303,27 +357,43 @@ const Board: React.FC<BoardProps> = ({
         fields: movedCard.fields || existingCard?.fields || {},
       };
 
+      // Create a new planner state with updated lanes
+      const updatedLanes = planner.lanes.map((lane) => {
+        // If it's the source lane, remove the card
+        if (lane.cards.some((c) => c.id === cardId)) {
+          return {
+            ...lane,
+            cards: lane.cards.filter((c) => c.id !== cardId),
+          };
+        }
+
+        // If it's the target lane, insert card at correct position and reindex
+        if (lane.id === newLaneId) {
+          // Get existing cards without the moved card (in case it's the same lane)
+          const existingCards = lane.cards.filter((c) => c.id !== cardId);
+
+          // Insert the moved card at the specified position
+          const newCards = [...existingCards];
+          newCards.splice(newPosition, 0, mergedCard);
+
+          // Update positions to match array indices
+          const positionedCards = newCards.map((card, idx) => ({
+            ...card,
+            position: idx,
+          }));
+
+          return {
+            ...lane,
+            cards: positionedCards,
+          };
+        }
+
+        return lane;
+      });
+
       onPlannerUpdate({
         ...planner,
-        lanes: planner.lanes.map((lane) => {
-          // If it's the source lane, remove the card
-          if (lane.cards.some((c) => c.id === cardId)) {
-            return {
-              ...lane,
-              cards: lane.cards.filter((c) => c.id !== cardId),
-            };
-          }
-          // If it's the target lane, insert card at correct position
-          if (lane.id === newLaneId) {
-            const newCards = [...lane.cards];
-            newCards.splice(newPosition, 0, mergedCard);
-            return {
-              ...lane,
-              cards: newCards,
-            };
-          }
-          return lane;
-        }),
+        lanes: updatedLanes,
       });
     } catch (error) {
       console.error("Failed to move card:", error);
@@ -352,48 +422,72 @@ const Board: React.FC<BoardProps> = ({
 
     try {
       if (type === "lane") {
-        const newOrder = Array.from(planner.lanes);
-        const [removed] = newOrder.splice(source.index, 1);
-
-        // Find the dragged lane
+        // Normalize lane ID
         const laneId = draggableId.startsWith("lane-")
           ? draggableId.replace(/^lane-/, "")
           : draggableId;
+
+        // Find the dragged lane
         const draggedLane = planner.lanes.find((l) => l.id === laneId);
         if (!draggedLane) {
           console.error("Dragged lane not found");
           return;
         }
 
-        // Check if this is a split lane (has a template_lane_id)
-        // If so, we need to keep all lanes with the same template_lane_id together
-        if (draggedLane.template_lane_id) {
-          // Find all lanes with the same template_lane_id
-          const relatedLanes = planner.lanes.filter(
-            (l) =>
-              l.template_lane_id === draggedLane.template_lane_id &&
-              l.id !== draggedLane.id
-          );
+        // Create a copy of lanes sorted by position
+        const sortedLanes = [...planner.lanes].sort(
+          (a, b) => a.position - b.position
+        );
 
-          // If there are related lanes, we need to move them together
-          if (relatedLanes.length > 0) {
-            // Remove all related lanes from their current positions
-            const relatedLaneIndices = relatedLanes
-              .map((l) => newOrder.findIndex((nl) => nl.id === l.id))
-              .sort((a, b) => b - a); // Sort in descending order to remove from end first
+        // Group lanes by template_lane_id
+        const groups: { [key: string]: PlannerLane[] } = {};
+        sortedLanes.forEach((lane) => {
+          const groupId = lane.template_lane_id || lane.id;
+          if (!groups[groupId]) groups[groupId] = [];
+          groups[groupId].push(lane);
+        });
 
-            const removedRelatedLanes = relatedLaneIndices.map((idx) => {
-              const [lane] = newOrder.splice(idx, 1);
-              return lane;
-            });
+        // Sort each group internally by position
+        Object.values(groups).forEach((group) => {
+          group.sort((a, b) => a.position - b.position);
+        });
 
-            // Insert all related lanes after the dragged lane
-            newOrder.splice(destination.index + 1, 0, ...removedRelatedLanes);
-          }
+        // Get the position of the first lane in each group for overall ordering
+        let groupPositions = Object.entries(groups).map(([groupId, lanes]) => ({
+          groupId,
+          firstPosition: Math.min(...lanes.map((l) => l.position)),
+          lanes,
+        }));
+
+        // Sort groups by the position of their first lane
+        groupPositions.sort((a, b) => a.firstPosition - b.firstPosition);
+
+        // Find the group containing the dragged lane
+        const draggedGroupIndex = groupPositions.findIndex((g) =>
+          g.lanes.some((l) => l.id === laneId)
+        );
+
+        if (draggedGroupIndex === -1) {
+          console.error("Dragged lane group not found");
+          return;
         }
 
-        // Insert the dragged lane at the destination
-        newOrder.splice(destination.index, 0, removed);
+        // Remove the dragged group
+        const [draggedGroup] = groupPositions.splice(draggedGroupIndex, 1);
+
+        // Insert the group at the destination index
+        groupPositions.splice(destination.index, 0, draggedGroup);
+
+        // Flatten the groups back to a lane array and assign new positions
+        const newOrder: PlannerLane[] = [];
+        let position = 0;
+
+        groupPositions.forEach((group) => {
+          group.lanes.forEach((lane) => {
+            lane.position = position++;
+            newOrder.push(lane);
+          });
+        });
 
         // Update UI optimistically first
         onPlannerUpdate({ ...planner, lanes: newOrder });
@@ -426,17 +520,26 @@ const Board: React.FC<BoardProps> = ({
 
         const sourceCards = Array.from(sourceLane.cards);
         const [moved] = sourceCards.splice(source.index, 1);
-        const cardId = draggableId.replace(/^card-/, "");
+        // Normalize card ID consistently by always stripping prefix if present
+        const cardId = draggableId.startsWith("card-")
+          ? draggableId.replace(/^card-/, "")
+          : draggableId;
 
         if (sourceLane.id === destLane.id) {
           // Reordering within the same lane
           sourceCards.splice(destination.index, 0, moved);
 
+          // Update positions to match array indices for consistent ordering
+          const positionedCards = sourceCards.map((card, idx) => ({
+            ...card,
+            position: idx,
+          }));
+
           // Update UI optimistically first
           onPlannerUpdate({
             ...planner,
             lanes: planner.lanes.map((l) =>
-              l.id === sourceLane.id ? { ...l, cards: sourceCards } : l
+              l.id === sourceLane.id ? { ...l, cards: positionedCards } : l
             ),
           });
 
@@ -444,16 +547,14 @@ const Board: React.FC<BoardProps> = ({
           await reorderCards(
             planner.id,
             sourceLane.id,
-            sourceCards.map((c) => c.id)
+            positionedCards.map((c) => c.id)
           );
 
           console.log("Card reorder within lane successful");
         } else {
           // Moving between lanes
           // Use helper to ensure consistent state + backend update
-          const cardId = draggableId.startsWith("card-")
-            ? draggableId.replace(/^card-/, "")
-            : draggableId;
+          // ID normalization already handled above
           await handleMoveCard(cardId, destLane.id, destination.index);
           console.log("Card move between lanes successful");
         }
@@ -469,8 +570,10 @@ const Board: React.FC<BoardProps> = ({
     }
   };
 
-  // Use original planner.lanes order for now to avoid disappearing lanes
-  const orderedLanes = planner.lanes;
+  // Sort lanes by position to ensure consistent ordering
+  const orderedLanes = [...planner.lanes].sort(
+    (a, b) => a.position - b.position
+  );
 
   return (
     <DragDropContext onDragEnd={onDragEnd} enableDefaultSensors={true}>
@@ -485,7 +588,7 @@ const Board: React.FC<BoardProps> = ({
               {...provided.droppableProps}
             >
               {(() => {
-                // Group lanes by template_lane_id
+                // Group lanes by template_lane_id and ensure they're sorted by position
                 const groups: { [key: string]: PlannerLane[] } = {};
                 orderedLanes.forEach((lane) => {
                   const groupId = lane.template_lane_id || lane.id;
@@ -493,7 +596,26 @@ const Board: React.FC<BoardProps> = ({
                   groups[groupId].push(lane);
                 });
 
-                return Object.values(groups).map((group, gIndex) => {
+                // Sort each group internally by position
+                Object.values(groups).forEach((group) => {
+                  group.sort((a, b) => a.position - b.position);
+                });
+
+                // Get the position of the first lane in each group for overall ordering
+                const groupPositions = Object.entries(groups).map(
+                  ([groupId, lanes]) => ({
+                    groupId,
+                    firstPosition: Math.min(...lanes.map((l) => l.position)),
+                    lanes,
+                  })
+                );
+
+                // Sort groups by the position of their first lane
+                groupPositions.sort(
+                  (a, b) => a.firstPosition - b.firstPosition
+                );
+
+                return groupPositions.map(({ lanes: group }, gIndex) => {
                   // Parent is the one where template_lane_id is empty or equals itself
                   const parentLane = group.find(
                     (l) => !l.template_lane_id || l.template_lane_id === l.id
