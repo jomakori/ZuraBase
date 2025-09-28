@@ -2,7 +2,7 @@
   "packages": [
     "go@latest",
     "nodejs@latest",
-    "go-junit-report@latest",
+    "gotestsum@latest",
     "pre-commit@latest",
     "golangci-lint@latest",
     "docker-buildx@latest"
@@ -29,7 +29,7 @@
         "echo \"$GITHUB_TOKEN\" | docker login ghcr.io --username \"$GH_USER\" --password-stdin",
         "echo '✅ Logged into GHCR registry'",
         "cd frontend && docker buildx create --use --name ci_build || true",
-        "docker buildx build --builder ci_build --tag \"$IMAGE_NAME:$IMAGE_TAG\" --cache-from \"type=registry,ref=${REPO}:cache\" --cache-to \"type=registry,ref=${REPO}:cache,mode=max\" --push .",
+        "docker buildx build --builder ci_build --tag \"$IMAGE_NAME:$IMAGE_TAG\" --cache-from \"type=registry,ref=${REPO}:cache\" --cache-to \"type=registry,ref=${REPO}:cache,mode=max\" --push ."
       ]
     }
   }

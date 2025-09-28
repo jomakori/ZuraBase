@@ -1,5 +1,5 @@
 # Use the official Golang image as a base image
-FROM golang:1.23-alpine
+FROM golang:1.25-alpine
 
 # Install curl for healthchecks
 RUN apk add --no-cache curl
@@ -14,7 +14,7 @@ COPY . .
 RUN go mod download
 
 # Setup Go test tools
-RUN go install github.com/jstemmer/go-junit-report/v2@latest
+RUN go install gotest.tools/gotestsum@latest
 RUN mkdir -p test-results
 
 # Build the Go application

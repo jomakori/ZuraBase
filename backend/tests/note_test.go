@@ -3,96 +3,12 @@ package main
 import (
 	"context"
 	"testing"
-	"fmt"
-	"net/http"
-	"bytes"
-	"encoding/json"
-	"log"
 )
 
-
-// Workaround: Duplicate type and stubs due to Go package limitations and file structure constraints.
 type Note struct {
 	ID       string `json:"id"`
 	Text     string `json:"text"`
 	CoverURL string `json:"cover_url"`
-}
-
-// Stub implementations to allow compilation. Replace with HTTP client calls for integration testing.
-func SaveNote(ctx context.Context, note *Note) (*Note, error) {
-	url := apiEndpoint + "/note"
-	body, err := json.Marshal(note)
-	if err != nil {
-		return nil, fmt.Errorf("SaveNote: failed to marshal note: %w", err)
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("SaveNote: failed to create request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("SaveNote: request failed: %w", err)
-	}
-	defer func() {
-		if cerr := resp.Body.Close(); cerr != nil {
-			log.Printf("SaveNote: failed to close response body: %v", cerr)
-		}
-	}()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("SaveNote: unexpected status: %s", resp.Status)
-	}
-	var savedNote Note
-	if err := json.NewDecoder(resp.Body).Decode(&savedNote); err != nil {
-		return nil, fmt.Errorf("SaveNote: failed to decode response: %w", err)
-	}
-	return &savedNote, nil
-}
-
-func GetNote(ctx context.Context, id string) (*Note, error) {
-	url := fmt.Sprintf("%s/note/%s", apiEndpoint, id)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("GetNote: failed to create request: %w", err)
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("GetNote: request failed: %w", err)
-	}
-	defer func() {
-		if cerr := resp.Body.Close(); cerr != nil {
-			log.Printf("GetNote: failed to close response body: %v", cerr)
-		}
-	}()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GetNote: unexpected status: %s", resp.Status)
-	}
-	var note Note
-	if err := json.NewDecoder(resp.Body).Decode(&note); err != nil {
-		return nil, fmt.Errorf("GetNote: failed to decode response: %w", err)
-	}
-	return &note, nil
-}
-
-// TODO: Implement SaveNote and GetNote as HTTP client calls to the running backend server for integration testing,
-func deleteNoteByID(ctx context.Context, id string) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, apiEndpoint+"/note/"+id, nil)
-	if err != nil {
-		return err
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if cerr := resp.Body.Close(); cerr != nil {
-			log.Printf("deleteNoteByID: failed to close response body: %v", cerr)
-		}
-	}()
-	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusNotFound {
-		return fmt.Errorf("unexpected status: %s", resp.Status)
-	}
-	return nil
 }
 // or duplicate their logic here if you want to test without running the server.
 func TestSaveNote_Success(t *testing.T) {
@@ -129,6 +45,91 @@ func TestGetNote_Success(t *testing.T) {
         ID:       "test-id-2",
         Text:     "Test note text",
         CoverURL: "https://example.com/cover.jpg",
+    }
+    
+    package main
+    
+    import (
+    	"context"
+    	"fmt"
+    	"net/http"
+    	"testing"
+    )
+    
+    type Note struct {
+    	ID       string `json:"id"`
+    	Text     string `json:"text"`
+    	CoverURL string `json:"cover_url"`
+    }
+    
+    func saveNote(ctx context.Context, t *testing.T, note *Note) *Note {
+    	return doPostRequest[Note, Note](ctx, t, "/note", *note)
+    }
+    
+    func getNote(ctx context.Context, t *testing.T, id string) *Note {
+    	return doGetRequest[Note](ctx, t, "/note/"+id)
+    }
+    
+    func deleteNoteByID(ctx context.Context, t *testing.T, id string) {
+    	url := fmt.Sprintf("%s/note/%s", getAPIEndpoint(), id)
+    	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, nil)
+    	if err != nil {
+    		t.Fatalf("failed to create DELETE request: %v", err)
+    	}
+    	resp, err := http.DefaultClient.Do(req)
+    	if err != nil {
+    		t.Fatalf("failed DELETE request: %v", err)
+    	}
+    	defer resp.Body.Close()
+    }
+    
+    func TestSaveNote_Success(t *testing.T) {
+    	ctx := context.Background()
+    	note := &Note{
+    		ID:       "test-id-1",
+    		Text:     "Test note text",
+    		CoverURL: "https://example.com/cover.jpg",
+    	}
+    
+    	deleteNoteByID(ctx, t, note.ID)
+    
+    	saved := saveNote(ctx, t, note)
+    	if saved.Text != note.Text {
+    		t.Errorf("expected %q got %q", note.Text, saved.Text)
+    	}
+    	if saved.CoverURL != note.CoverURL {
+    		t.Errorf("expected %q got %q", note.CoverURL, saved.CoverURL)
+    	}
+    }
+    
+    func TestGetNote_Success(t *testing.T) {
+    	ctx := context.Background()
+    	testNote := &Note{
+    		ID:       "test-id-2",
+    		Text:     "Test note text",
+    		CoverURL: "https://example.com/cover.jpg",
+    	}
+    
+    	deleteNoteByID(ctx, t, testNote.ID)
+    	saveNote(ctx, t, testNote)
+    
+    	got := getNote(ctx, t, testNote.ID)
+    	if got.Text != testNote.Text {
+    		t.Errorf("expected %q got %q", testNote.Text, got.Text)
+    	}
+    	if got.CoverURL != testNote.CoverURL {
+    		t.Errorf("expected %q got %q", testNote.CoverURL, got.CoverURL)
+    	}
+    }
+    
+    func TestGetNote_NotFound(t *testing.T) {
+    	ctx := context.Background()
+    	deleteNoteByID(ctx, t, "non-existent-id")
+    
+    	got := getNote(ctx, t, "non-existent-id")
+    	if got != nil {
+    		t.Errorf("expected nil for missing note, got %+v", got)
+    	}
     }
 
     // Clean up any existing note

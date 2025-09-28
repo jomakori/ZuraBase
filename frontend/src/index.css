@@ -11,7 +11,8 @@
   -webkit-text-size-adjust: 100%;
 }
 
-html, body {
+html,
+body {
   @apply h-full;
 }
 
@@ -37,7 +38,7 @@ body {
 }
 
 .ProseMirror:focus {
-    outline: none;
+  outline: none;
 }
 
 .prose li {
@@ -46,6 +47,23 @@ body {
 
 .prose li p {
   @apply mt-2 mb-2;
+}
+
+/* Save button animation */
+@keyframes saveSuccessFlash {
+  0% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.05);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+.save-success-flash {
+  animation: saveSuccessFlash 0.5s ease-in-out;
 }
 
 /* purgecss end ignore */

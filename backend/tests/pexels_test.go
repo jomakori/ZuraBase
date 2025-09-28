@@ -58,3 +58,27 @@ func TestSearchPhoto_Success(t *testing.T) {
         t.Fatal("expected a search response, got nil")
     }
 }
+
+func TestSearchPhoto_EmptyResults(t *testing.T) {
+    ctx := context.Background()
+    query := "no-results-query"
+
+    response, err := SearchPhoto(ctx, query)
+    if err != nil {
+        t.Fatalf("expected no error, got %v", err)
+    }
+
+    if response != nil && len(response.Photos) != 0 {
+        t.Errorf("expected zero photos, got %d", len(response.Photos))
+    }
+}
+
+func TestSearchPhoto_InvalidQuery(t *testing.T) {
+    ctx := context.Background()
+    query := ""
+
+    _, err := SearchPhoto(ctx, query)
+    if err == nil {
+        t.Fatal("expected error for empty query but got nil")
+    }
+}

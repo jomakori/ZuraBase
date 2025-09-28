@@ -80,10 +80,10 @@ Like in CI, we'll utilize devbox to perform tests in an isolated env:
 
 ```bash
 # Test Frontend
-devbox test_fe
+devbox run test_fe
 
 # Test Backend
-devbox test_be
+devbox run test_be
 
 ```
 
