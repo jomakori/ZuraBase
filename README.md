@@ -3,15 +3,15 @@
 <!-- HEADER STYLE: COMPACT -->
 <img src="images/markdown_notes.png" width="50%" align="center" style="margin-right: 15px">
 
-# Markdown Notes App
+# Zurabase
 
 <!-- BADGES -->
-<img src="https://img.shields.io/github/actions/workflow/status/jomakori/notes-app/1-staging.yml?branch=staging&label=Deploy%20Staging&style=flat" alt="Deploy Staging">
-<img src="https://img.shields.io/github/actions/workflow/status/jomakori/notes-app/2-production.yml?label=Release%20Production&style=flat" alt="Release Production">
+<img src="https://img.shields.io/github/actions/workflow/status/jomakori/zurabase/1-staging.yml?branch=staging&label=Deploy%20Staging&style=flat" alt="Deploy Staging">
+<img src="https://img.shields.io/github/actions/workflow/status/jomakori/zurabase/2-production.yml?label=Release%20Production&style=flat" alt="Release Production">
 
-<img src="https://img.shields.io/github/last-commit/jomakori/notes-app?style=flat-square&logo=git&logoColor=white&color=0080ff" alt="last-commit">
-<img src="https://img.shields.io/github/languages/top/jomakori/notes-app?style=flat-square&color=0080ff" alt="repo-top-language">
-<img src="https://img.shields.io/github/languages/count/jomakori/notes-app?style=flat-square&color=0080ff" alt="repo-language-count">
+<img src="https://img.shields.io/github/last-commit/jomakori/zurabase?style=flat-square&logo=git&logoColor=white&color=0080ff" alt="last-commit">
+<img src="https://img.shields.io/github/languages/top/jomakori/zurabase?style=flat-square&color=0080ff" alt="repo-top-language">
+<img src="https://img.shields.io/github/languages/count/jomakori/zurabase?style=flat-square&color=0080ff" alt="repo-language-count">
 
 <em>Built with these tools and technologies:</em>
 
@@ -32,25 +32,32 @@
 <img src="https://img.shields.io/badge/Vite-646CFF.svg?style=flat-square&logo=Vite&logoColor=white" alt="Vite">
 <img src="https://img.shields.io/badge/CSS-663399.svg?style=flat-square&logo=CSS&logoColor=white" alt="CSS">
 <img src="https://img.shields.io/badge/Jest-C21325.svg?style=flat-square&logo=Jest&logoColor=white" alt="Jest">
+<img src="https://img.shields.io/badge/MongoDB-47A248.svg?style=flat-square&logo=MongoDB&logoColor=white" alt="MongoDB">
 
 ## Overview
 
-This repository hosts the markdown notes application, including both the frontend and backend code. It is a markdown notes app built with a Go backend and a Node.js (React/TypeScript) frontend.
+This repository hosts a modular monolith application with two main features: a markdown notes app and a planner board system, both built with a Go backend and a Node.js (React/TypeScript) frontend. The application allows users to create, edit, and share both markdown notes and interactive planning boards.
 
 
 ![Frontend](./images/demo.gif)
 
-The backend uses an SQL database to store meeting notes and has three API endpoints:
-* `GET  /note/:id` - Retrieve a note by ID.
-* `POST /note` - Create a new note (or update an existing one).
-* `GET  /images/:query` - Search for images by using the [Pexels API](https://www.pexels.com/api/).
+The backend uses MongoDB to store notes and planner data, with a comprehensive API for both features.
 
 ## Features
 
+### Markdown Notes
 - **Markdown Support**: The application supports markdown editing, allowing users to format their notes with ease.
 - **Image Handling**: Users can include images in their notes, enhancing the visual aspect of their content.
-- **Sharing Capabilities**: Notes can be shared with others, promoting collaboration. No account creation needed to create, view and share notes
+- **Sharing Capabilities**: Notes can be shared with others, promoting collaboration. No account creation needed to create, view and share notes.
 
+### Planner Boards
+- **Kanban and Scrum Templates**: Create planning boards with predefined templates for Kanban or Scrum methodologies.
+- **Customizable Lanes**: Create, reorder, and color-code lanes to organize your tasks.
+- **Card Management**: Add cards to lanes with customizable fields, move cards between lanes, and reorder them.
+- **Split Lane Functionality**: Split existing lanes to create new organizational structures.
+- **Markdown Export**: Export your planner board as a structured markdown document.
+- **Drag and Drop Interface**: Intuitive drag-and-drop interface for moving cards and lanes.
+- **Real-time Updates**: Changes are automatically saved as you work.
 
 ## Getting Started
 
@@ -62,6 +69,7 @@ This project requires the following dependencies:
 - **Package Manager:** NPM, Go
 - **Secrets Manager:** Doppler
 - **Container Runtime:** Docker
+- **Database:** MongoDB
 - **Testing:** Pre-commit, Devbox
 
 ## Developing locally
@@ -87,9 +95,41 @@ devbox run test_be
 
 ```
 
+## API Endpoints
+
+### Notes API
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/note/:id` | Retrieve a note by ID |
+| POST | `/note` | Create a new note (or update an existing one) |
+| GET | `/images/:query` | Search for images by using the [Pexels API](https://www.pexels.com/api/) |
+
+### Planner API
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/planner` | Create a new planner board |
+| GET | `/planner/:id` | Retrieve a planner board by ID |
+| PUT | `/planner/:id` | Update a planner board's title and description |
+| DELETE | `/planner/:id` | Delete a planner board |
+| GET | `/planner/templates` | Get available planner templates |
+| GET | `/planner/:id/export` | Export a planner as markdown |
+| POST | `/planner/import` | Import a planner from markdown |
+| POST | `/planner/:id/lane` | Add a new lane to a planner |
+| PUT | `/planner/:id/lane/:laneId` | Update a lane |
+| DELETE | `/planner/:id/lane/:laneId` | Delete a lane |
+| POST | `/planner/:id/lane/:laneId/split` | Split a lane into two |
+| POST | `/planner/:id/lane/:laneId/card` | Add a card to a lane |
+| PUT | `/planner/:id/lane/:laneId/card/:cardId` | Update a card |
+| DELETE | `/planner/:id/lane/:laneId/card/:cardId` | Delete a card |
+| POST | `/planner/:id/card/:cardId/move` | Move a card to a different lane |
+| POST | `/planner/:id/lanes/reorder` | Reorder lanes |
+| POST | `/planner/:id/lane/:laneId/cards/reorder` | Reorder cards in a lane |
+
 ## Contributing
-- **🐛 [Report Issues](https://github.com/jomakori/notes-app/issues)**: Submit bugs found or log feature requests for the `notes-app` project.
-- **💡 [Submit Pull Requests](https://github.com/jomakori/notes-app/pulls)**: Review open PRs, and submit your own PRs.
+- **🐛 [Report Issues](https://github.com/jomakori/zurabase/issues)**: Submit bugs found or log feature requests for the `zurabase` project.
+- **💡 [Submit Pull Requests](https://github.com/jomakori/zurabase/pulls)**: Review open PRs, and submit your own PRs.
 
 ### Contributing Guidelines
 <details>
@@ -97,7 +137,7 @@ devbox run test_be
 
 1. **Clone the Repository**: Start by cloning the repo
    ```sh
-   git clone https://github.com/jomakori/notes-app
+   git clone https://github.com/jomakori/zurabase
    ```
 2. **Create a New Branch**: Always work on a new branch, giving it a descriptive name.
    ```sh
@@ -126,7 +166,7 @@ devbox run test_be
 ### Contributors
 <br>
 <p align="left">
-   <a href="https://github.com{/jomakori/notes-app/}graphs/contributors">
-      <img src="https://contrib.rocks/image?repo=jomakori/notes-app">
+   <a href="https://github.com{/jomakori/zurabase/}graphs/contributors">
+      <img src="https://contrib.rocks/image?repo=jomakori/zurabase">
    </a>
 </p>
