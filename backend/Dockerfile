@@ -1,21 +1,24 @@
 # Use the official Golang image as a base image
-FROM golang:1.25-alpine
+FROM golang:alpine
 
-# Install curl for healthchecks
-RUN apk add --no-cache curl
+# Install curl for healthchecks and certificates (least likely to change)
+RUN apk add --no-cache ca-certificates curl
 
 # Set the working directory inside the container
 WORKDIR /app
 
-# Copy source code + dependencies\
-COPY . .
+# Copy only go.mod and go.sum first to leverage caching
+COPY go.mod go.sum ./
 
-# Download Go modules
+# Download dependencies
 RUN go mod download
 
-# Setup Go test tools
+# Setup Go test tools (these rarely change)
 RUN go install gotest.tools/gotestsum@latest
 RUN mkdir -p test-results
+
+# Copy the rest of the source code (most likely to change)
+COPY . .
 
 # Build the Go application
 RUN go build -o main .
