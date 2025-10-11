@@ -9,9 +9,10 @@ import (
 	"strings"
 	"time"
 
+	"sort"
+
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
-	"sort"
 )
 
 // Planner represents a Markdown-based planning board
@@ -70,7 +71,7 @@ func Initialize(client *mongo.Client, dbName string) {
 
 // CreatePlanner creates a new planner document in MongoDB
 func CreatePlanner(ctx context.Context, title, description, templateID string) (*Planner, error) {
-	plannerID := generateID()
+	plannerID := GenerateID()
 	now := time.Now()
 
 	planner := &Planner{
@@ -227,27 +228,17 @@ func HandleCreatePlanner(w http.ResponseWriter, r *http.Request) {
 	if userID != "" {
 		fmt.Printf("Planner created by user %s\n", userID)
 	}
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	
 	planner, err := CreatePlanner(r.Context(), request.Title, request.Description, request.TemplateID)
 	if err != nil {
-		// Log detailed error for server-side diagnosis
 		log.Printf("[ERROR] Failed to create planner (title=%s, templateID=%s): %v", request.Title, request.TemplateID, err)
 		http.Error(w, fmt.Sprintf("Failed to create planner: %v", err), http.StatusInternalServerError)
 		return
 	}
-	
-planner, err := CreatePlanner(r.Context(), request.Title, request.Description, request.TemplateID)
-if err != nil {
-	http.Error(w, err.Error(), http.StatusInternalServerError)
-	return
-}
 
-w.Header().Set("Content-Type", "application/json")
-if err := json.NewEncoder(w).Encode(planner); err != nil {
-	http.Error(w, err.Error(), http.StatusInternalServerError)
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(planner); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
 }
 
 // HandleGetPlanner handles GET /planner/{id}
@@ -338,7 +329,7 @@ func HandleDeletePlanner(w http.ResponseWriter, r *http.Request) {
 }
 
 // generateID creates a unique ID for database records
-func generateID() string {
+func GenerateID() string {
 	// Simple implementation using timestamp and random number
 	// In production, use a proper UUID library
 	return fmt.Sprintf("%d-%d", time.Now().UnixNano(), time.Now().Unix())

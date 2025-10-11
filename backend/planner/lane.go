@@ -24,7 +24,7 @@ func AddLane(ctx context.Context, plannerID, title, description, color string, p
 		return nil, err
 	}
 
-	laneID := generateID()
+	laneID := GenerateID()
 	lane := PlannerLane{
 		ID:          laneID,
 		PlannerID:   plannerID,
@@ -167,7 +167,7 @@ func SplitLane(ctx context.Context, laneID, newTitle, newDescription, newColor s
 	cardsToMove = append(cardsToMove, originalLane.Cards[splitPosition:]...)
 
 	// Construct new lane
-	newLaneID := generateID()
+	newLaneID := GenerateID()
 	newLane := PlannerLane{
 		ID:             newLaneID,
 		PlannerID:      planner.ID,

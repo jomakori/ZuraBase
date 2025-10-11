@@ -43,26 +43,26 @@ func InitializeTemplates(ctx context.Context) error {
 
 	templates := []PlannerTemplate{
 		{
-			ID:          generateID(),
+			ID:          GenerateID(),
 			Name:        "Scrum Board",
 			Type:        "scrum",
 			Description: "A board for managing Scrum sprints",
 			CreatedAt:   time.Now(),
 			Lanes: []PlannerTemplateLane{
-				{ID: generateID(), Name: "Backlog", Description: "Items not ready", Position: 1, CreatedAt: time.Now()},
-				{ID: generateID(), Name: "To Do", Description: "Planned items", Position: 2, CreatedAt: time.Now()},
+				{ID: GenerateID(), Name: "Backlog", Description: "Items not ready", Position: 1, CreatedAt: time.Now()},
+				{ID: GenerateID(), Name: "To Do", Description: "Planned items", Position: 2, CreatedAt: time.Now()},
 			},
 		},
 		{
-			ID:          generateID(),
+			ID:          GenerateID(),
 			Name:        "Kanban Board",
 			Type:        "kanban",
 			Description: "A board for visualizing work",
 			CreatedAt:   time.Now(),
 			Lanes: []PlannerTemplateLane{
-				{ID: generateID(), Name: "To Do", Description: "Items to do", Position: 1, CreatedAt: time.Now()},
-				{ID: generateID(), Name: "In Progress", Description: "Ongoing items", Position: 2, CreatedAt: time.Now()},
-				{ID: generateID(), Name: "Done", Description: "Completed items", Position: 3, CreatedAt: time.Now()},
+				{ID: GenerateID(), Name: "To Do", Description: "Items to do", Position: 1, CreatedAt: time.Now()},
+				{ID: GenerateID(), Name: "In Progress", Description: "Ongoing items", Position: 2, CreatedAt: time.Now()},
+				{ID: GenerateID(), Name: "Done", Description: "Completed items", Position: 3, CreatedAt: time.Now()},
 			},
 		},
 	}

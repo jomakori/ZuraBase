@@ -12,10 +12,10 @@ import (
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 
+	"zurabase/auth"
 	"zurabase/notes"
 	"zurabase/pexels"
 	"zurabase/planner"
-	"zurabase/auth"
 )
 
 var mongoClient *mongo.Client

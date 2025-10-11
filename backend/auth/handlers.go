@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"os"
 
 	"github.com/google/uuid"
 )
@@ -105,7 +106,11 @@ func HandleGoogleCallback(w http.ResponseWriter, r *http.Request) {
 	if idx := strings.Index(redirectURL, "/auth/callback"); idx != -1 {
 		redirectURL = redirectURL[:idx]
 	}
-	http.Redirect(w, r, redirectURL+"/dashboard", http.StatusTemporaryRedirect)
+	uiEndpoint := os.Getenv("UI_ENDPOINT")
+	if uiEndpoint == "" {
+		uiEndpoint = "http://localhost:8181"
+	}
+	http.Redirect(w, r, strings.TrimSuffix(uiEndpoint, "/")+"/dashboard", http.StatusSeeOther)
 }
 
 // HandleGetCurrentUser returns the authenticated user
