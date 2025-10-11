@@ -25,22 +25,8 @@ const Dashboard: React.FC = () => {
         setError(null);
         // In a real API, we’d use /api/user/notes, /api/user/planners, etc.
         // Here, mock with demo data
-        setItems([
-          {
-            id: "demo-note-1",
-            title: "Project Notes",
-            type: "note",
-            updatedAt: new Date().toISOString(),
-            coverUrl:
-              "https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=800",
-          },
-          {
-            id: "demo-planner-2",
-            title: "Product Roadmap",
-            type: "planner",
-            updatedAt: new Date().toISOString(),
-          },
-        ]);
+        // Clear out demo placeholders; we only show message if empty
+        setItems([]);
       } catch (err) {
         console.error(err);
         setError("Failed to load user content.");
@@ -63,7 +49,6 @@ const Dashboard: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <NavBar currentPage="home" />
       <div className="max-w-6xl mx-auto px-4 py-8">
         <h1 className="text-3xl font-bold mb-4">
           Welcome back, {user.name.split(" ")[0]}!
@@ -104,8 +89,8 @@ const Dashboard: React.FC = () => {
         </div>
 
         {items.length === 0 && (
-          <p className="text-gray-600 mt-6">
-            No content yet. Create your first note or planner.
+          <p className="text-gray-600 mt-6 text-center">
+            No recent items to display.
           </p>
         )}
       </div>

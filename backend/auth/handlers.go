@@ -110,7 +110,7 @@ func HandleGoogleCallback(w http.ResponseWriter, r *http.Request) {
 	if uiEndpoint == "" {
 		uiEndpoint = "http://localhost:8181"
 	}
-	http.Redirect(w, r, strings.TrimSuffix(uiEndpoint, "/")+"/dashboard", http.StatusSeeOther)
+	http.Redirect(w, r, strings.TrimSuffix(uiEndpoint, "/")+"/", http.StatusSeeOther)
 }
 
 // HandleGetCurrentUser returns the authenticated user

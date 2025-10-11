@@ -48,16 +48,6 @@ export const Router: React.FC = () => {
   }, []);
 
   // Protected user dashboard route
-  if (path.startsWith("/dashboard")) {
-    const Dashboard = React.lazy(() => import("./components/Dashboard"));
-    return (
-      <ErrorBoundary>
-        <React.Suspense fallback={<div>Loading Dashboard...</div>}>
-          <Dashboard />
-        </React.Suspense>
-      </ErrorBoundary>
-    );
-  }
 
   // Routes
   if (path.startsWith("/notes")) {
