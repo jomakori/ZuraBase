@@ -45,6 +45,7 @@ export async function createPlanner(
         description: description,
         template_id: templateId,
         lanes: [],
+        columns: [], // ensure TypeScript compliance
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       };
@@ -67,6 +68,7 @@ export async function createPlanner(
       description: description,
       template_id: templateId,
       lanes: [],
+      columns: [], // ensure column array always present
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };

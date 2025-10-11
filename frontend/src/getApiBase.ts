@@ -3,10 +3,10 @@
  * This file should only be imported in Vite/browser builds, never in Node/Jest.
  */
 export function getApiBase(): string {
-  const apiEndpoint = import.meta.env.VITE_API_ENDPOINT;
+  const apiEndpoint = import.meta.env.API_ENDPOINT;
 
   if (!apiEndpoint) {
-    throw new Error("VITE_API_ENDPOINT environment variable is not set");
+    throw new Error("API_ENDPOINT environment variable is not set");
   }
 
   // If we're in the browser, replace localhost with the actual hostname

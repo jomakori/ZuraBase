@@ -8,10 +8,10 @@ var apiEndpoint = func() string {
 		return "http://backend:8080"
 	}
 	
-	// Otherwise use the VITE_API_ENDPOINT
-	v := os.Getenv("VITE_API_ENDPOINT")
+	// Otherwise use the API_ENDPOINT
+	v := os.Getenv("API_ENDPOINT")
 	if v == "" {
-		panic("VITE_API_ENDPOINT environment variable must be set for integration tests")
+		panic("API_ENDPOINT environment variable must be set for integration tests")
 	}
 	return v
 }()

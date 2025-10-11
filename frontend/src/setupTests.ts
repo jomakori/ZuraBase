@@ -5,16 +5,16 @@ global.ResizeObserver = class {
   disconnect() {}
 };
 import "@testing-library/jest-dom";
-// Ensure process.env.VITE_API_ENDPOINT is set for tests
+// Ensure process.env.API_ENDPOINT is set for tests
 // Mock getApiBase to avoid import.meta in tests
 jest.mock("./getApiBase", () => ({
   getApiBase: () => "http://localhost:3000",
 }));
-process.env.VITE_API_ENDPOINT = "http://localhost:3000";
+process.env.API_ENDPOINT = "http://localhost:3000";
 
 /**
  * Mock import.meta.env for Jest (Vite-style env variables)
- * This ensures code using import.meta.env.VITE_API_ENDPOINT works in tests.
+ * This ensures code using import.meta.env.API_ENDPOINT works in tests.
  */
 Object.defineProperty(globalThis, "import", {
   value: {
@@ -22,7 +22,7 @@ Object.defineProperty(globalThis, "import", {
       env: {
         DEV: true,
         PROD: false,
-        VITE_API_ENDPOINT: "http://localhost:3000", // Match the variable used in client.ts
+        API_ENDPOINT: "http://localhost:3000", // Match the variable used in client.ts
       },
     },
   },

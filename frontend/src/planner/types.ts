@@ -28,7 +28,8 @@ export interface Planner {
   created_at: string;
   updated_at: string;
   lanes: PlannerLane[];
-  columns: PlannerColumn[];
+  /** Optional since backend may omit empty columns */
+  columns?: PlannerColumn[];
 }
 
 /** Represents a lane in a planner */

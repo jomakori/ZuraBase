@@ -15,9 +15,9 @@ func getAPIEndpoint() string {
 	if os.Getenv("DOCKER_ENV") == "true" {
 		return "http://backend:8080"
 	}
-	v := os.Getenv("VITE_API_ENDPOINT")
+	v := os.Getenv("API_ENDPOINT")
 	if v == "" {
-		panic("VITE_API_ENDPOINT environment variable must be set for integration tests")
+		panic("API_ENDPOINT environment variable must be set for integration tests")
 	}
 	return v
 }

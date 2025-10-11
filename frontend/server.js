@@ -12,8 +12,8 @@ const uiEndpoint = process.env.UI_ENDPOINT || "*";
 console.log(`[Server] Using UI_ENDPOINT for CORS: ${uiEndpoint}`);
 
 // Get API endpoint
-const apiEndpoint = process.env.VITE_API_ENDPOINT;
-console.log(`[Server] Using VITE_API_ENDPOINT: ${apiEndpoint}`);
+const apiEndpoint = process.env.API_ENDPOINT;
+console.log(`[Server] Using API_ENDPOINT: ${apiEndpoint}`);
 
 // Request logging middleware
 app.use((req, res, next) => {
@@ -23,8 +23,10 @@ app.use((req, res, next) => {
 
 // CORS middleware
 app.use((req, res, next) => {
-  console.log(`[Server] Setting CORS headers for ${req.method} ${req.url} from ${req.ip}`);
-  
+  console.log(
+    `[Server] Setting CORS headers for ${req.method} ${req.url} from ${req.ip}`
+  );
+
   // Allow all origins for testing
   res.header("Access-Control-Allow-Origin", "*");
   res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
@@ -87,7 +89,7 @@ app.listen(port, "0.0.0.0", () => {
   // Check for required environment variables
   if (!apiEndpoint) {
     console.error(
-      "[Server] ERROR: VITE_API_ENDPOINT environment variable is not set"
+      "[Server] ERROR: API_ENDPOINT environment variable is not set"
     );
     console.error("[Server] Application may not function correctly");
   }
@@ -127,11 +129,11 @@ app.get("/plain", (req, res) => {
   try {
     // Set minimal headers
     res.writeHead(200, {
-      'Content-Type': 'text/plain',
-      'Content-Length': 19
+      "Content-Type": "text/plain",
+      "Content-Length": 19,
     });
     // Send response and end
-    res.end('Plain text response');
+    res.end("Plain text response");
     console.log("[Server] Plain text response sent successfully");
   } catch (error) {
     console.error("[Server] Error sending plain text response:", error);
@@ -141,6 +143,6 @@ app.get("/plain", (req, res) => {
 // Add a super simple endpoint
 app.get("/hello", (req, res) => {
   console.log(`[Server] Hello endpoint called from ${req.ip}`);
-  res.end('Hello');
+  res.end("Hello");
   console.log("[Server] Hello response sent");
 });
