@@ -207,6 +207,7 @@ func ImportPlannerFromMarkdown(ctx context.Context, markdown, templateID string)
 
 // HandleCreatePlanner handles POST /planner
 func HandleCreatePlanner(w http.ResponseWriter, r *http.Request) {
+	userID, _ := r.Context().Value("user_id").(string)
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -222,6 +223,13 @@ func HandleCreatePlanner(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+
+	if userID != "" {
+		fmt.Printf("Planner created by user %s\n", userID)
+	}
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	
 	planner, err := CreatePlanner(r.Context(), request.Title, request.Description, request.TemplateID)
 	if err != nil {
@@ -231,10 +239,15 @@ func HandleCreatePlanner(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(planner); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-	}
+planner, err := CreatePlanner(r.Context(), request.Title, request.Description, request.TemplateID)
+if err != nil {
+	http.Error(w, err.Error(), http.StatusInternalServerError)
+	return
+}
+
+w.Header().Set("Content-Type", "application/json")
+if err := json.NewEncoder(w).Encode(planner); err != nil {
+	http.Error(w, err.Error(), http.StatusInternalServerError)
 }
 
 // HandleGetPlanner handles GET /planner/{id}

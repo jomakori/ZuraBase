@@ -15,6 +15,7 @@ import (
 	"zurabase/notes"
 	"zurabase/pexels"
 	"zurabase/planner"
+	"zurabase/auth"
 )
 
 var mongoClient *mongo.Client
@@ -83,6 +84,7 @@ func main() {
 	// Initialize packages
 	notes.Initialize(mongoClient, "zurabase")
 	planner.Initialize(mongoClient, "zurabase")
+	auth.Initialize(mongoClient, "zurabase")
 
 	if err := planner.InitializeTemplates(context.Background()); err != nil {
 		log.Fatalf("Failed to initialize planner templates: %v", err)
@@ -263,8 +265,19 @@ func main() {
 		}
 	})
 	
+	// Register authentication routes
+	mux.HandleFunc("/auth/google", auth.HandleGoogleLogin)
+	mux.HandleFunc("/auth/google/callback", auth.HandleGoogleCallback)
+	mux.HandleFunc("/auth/user", func(w http.ResponseWriter, r *http.Request) {
+		auth.AuthMiddleware(http.HandlerFunc(auth.HandleGetCurrentUser)).ServeHTTP(w, r)
+	})
+	mux.HandleFunc("/auth/logout", auth.HandleLogout)
+
+	// Wrap existing mux with optional authentication middleware
+	protectedMux := auth.OptionalAuthMiddleware(mux)
+
 	// Create handler chain with CORS middleware
-	handler := CORS(mux)
+	handler := CORS(protectedMux)
 	
 	log.Println("Starting server on :8080")
 	if err := http.ListenAndServe(":8080", handler); err != nil {

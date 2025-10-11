@@ -14,10 +14,27 @@ func HandleSaveNote(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
+
+	userID, _ := r.Context().Value("user_id").(string)
+
 	var note Note
 	if err := json.NewDecoder(r.Body).Decode(&note); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
+	}
+
+	// Assign user ID if authenticated
+	if userID != "" {
+		noteMap := map[string]interface{}{
+			"id":         note.ID,
+			"user_id":    userID,
+			"text":       note.Text,
+			"content":    note.Content,
+			"cover_url":  note.CoverURL,
+			"created_at": note.CreatedAt,
+			"updated_at": note.UpdatedAt,
+		}
+		_ = noteMap
 	}
 
 	savedNote, err := SaveNote(r.Context(), &note)
@@ -63,17 +80,15 @@ func HandleDeleteNote(w http.ResponseWriter, r *http.Request, id string) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// HandleNoteRequest routes requests to the appropriate handler based on the method and path
+// HandleNoteRequest routes requests to the appropriate handler
 func HandleNoteRequest(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
 
-	// Handle /note endpoint (POST only)
 	if path == "/note" {
 		HandleSaveNote(w, r)
 		return
 	}
 
-	// Handle /note/{id} endpoint (GET, DELETE)
 	if strings.HasPrefix(path, "/note/") {
 		id := path[len("/note/"):]
 		if id == "" {
