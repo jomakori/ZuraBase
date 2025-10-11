@@ -3,7 +3,11 @@ import { NotePencil, ListChecks, House } from "@phosphor-icons/react";
 
 interface NavBarProps {
   currentPage: "home" | "notes" | "planner";
+  isAuthenticated?: boolean;
 }
+
+import { useAuth } from "../auth/AuthContext";
+import UserProfileDropdown from "./UserProfileDropdown";
 
 const NavBar: React.FC<NavBarProps> = ({ currentPage }) => {
   return (
@@ -48,9 +52,27 @@ const NavBar: React.FC<NavBarProps> = ({ currentPage }) => {
               </a>
             </nav>
           </div>
+          <div>
+            <NavAuthSection />
+          </div>
         </div>
       </div>
     </div>
+  );
+};
+
+const NavAuthSection: React.FC = () => {
+  const { user, login, loading } = useAuth();
+
+  if (loading) return null;
+  if (user) return <UserProfileDropdown />;
+  return (
+    <button
+      onClick={login}
+      className="px-4 py-2 bg-blue-600 text-white rounded-md font-medium hover:bg-blue-700 focus:outline-none"
+    >
+      Sign in with Google
+    </button>
   );
 };
 

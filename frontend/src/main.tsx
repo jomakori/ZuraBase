@@ -1,7 +1,8 @@
 import "prosemirror-view/style/prosemirror.css";
-import React, { useEffect, useState, Suspense } from "react";
+import React, { useEffect, useState } from "react";
 import ReactDOM from "react-dom/client";
 import App from "./components/App";
+import { AuthProvider } from "./auth/AuthContext";
 import { NotesApp } from "./notes";
 import { PlannerApp } from "./planner";
 import ErrorBoundary from "./components/ErrorBoundary";
@@ -14,18 +15,15 @@ export const Router: React.FC = () => {
 
   // Update path when the URL changes
   useEffect(() => {
-    console.log("[Router] Initial path:", path);
-
     const handleLocationChange = () => {
       const newPath = window.location.pathname;
-      console.log("[Router] Path changed:", newPath);
       setPath(newPath);
     };
 
-    // Listen for popstate events (back/forward navigation)
+    // Listen for popstate events (back/forward)
     window.addEventListener("popstate", handleLocationChange);
 
-    // Also listen for click events on links to update the path
+    // Capture anchor clicks and handle internal routing
     const handleLinkClick = (e: MouseEvent) => {
       const target = e.target as HTMLElement;
       const anchor = target.closest("a");
@@ -36,7 +34,6 @@ export const Router: React.FC = () => {
       ) {
         e.preventDefault();
         const newPath = new URL(anchor.href).pathname;
-        console.log("[Router] Link clicked, new path:", newPath);
         window.history.pushState(null, "", anchor.href);
         setPath(newPath);
       }
@@ -48,42 +45,40 @@ export const Router: React.FC = () => {
       window.removeEventListener("popstate", handleLocationChange);
       document.removeEventListener("click", handleLinkClick);
     };
-  }, [path]);
+  }, []);
 
-  // Render the appropriate component based on the path
-  console.log("[Router] Rendering component for path:", path);
-
-  // Add debugging for API endpoint
-  try {
-    // Use import.meta instead of require
-    import("./getApiBase").then(({ getApiBase }) => {
-      console.log("[Router] API Base URL:", getApiBase());
-    }).catch(apiErr => {
-      console.error("[Router] Error importing getApiBase:", apiErr);
-    });
-  } catch (apiErr) {
-    console.error("[Router] Error getting API base URL:", apiErr);
+  // Protected user dashboard route
+  if (path.startsWith("/dashboard")) {
+    const Dashboard = React.lazy(() => import("./components/Dashboard"));
+    return (
+      <ErrorBoundary>
+        <React.Suspense fallback={<div>Loading Dashboard...</div>}>
+          <Dashboard />
+        </React.Suspense>
+      </ErrorBoundary>
+    );
   }
 
+  // Routes
   if (path.startsWith("/notes")) {
-    console.log("[Router] Rendering NotesApp");
     return (
       <ErrorBoundary>
         <NotesApp />
       </ErrorBoundary>
     );
   } else if (path.startsWith("/planner")) {
-    console.log("[Router] Rendering PlannerApp");
     return (
       <ErrorBoundary>
         <PlannerApp />
       </ErrorBoundary>
     );
   } else {
-    console.log("[Router] Rendering App");
+    const Landing = React.lazy(() => import("./components/App"));
     return (
       <ErrorBoundary>
-        <App />
+        <React.Suspense fallback={<div>Loading...</div>}>
+          <Landing />
+        </React.Suspense>
       </ErrorBoundary>
     );
   }
@@ -91,6 +86,8 @@ export const Router: React.FC = () => {
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
-    <Router />
+    <AuthProvider>
+      <Router />
+    </AuthProvider>
   </React.StrictMode>
 );
