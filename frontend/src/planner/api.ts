@@ -28,56 +28,71 @@ export async function createPlanner(
     const response = await fetch(`${getApiBase()}/planner`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      credentials: "include",
       body: JSON.stringify({ template_id: templateId, title, description }),
     });
 
-    if (!response.ok) {
-      // Create a unique ID that's consistent and can be referenced
+    let planner: Planner;
+    if (response.ok) {
+      planner = await response.json();
+    } else {
       const uniqueId = `temp-${Date.now()}-${Math.random()
         .toString(36)
         .substring(2, 10)}`;
       console.log("Creating temporary planner with ID:", uniqueId);
-
-      // Return a mock planner
-      return {
+      planner = {
         id: uniqueId,
-        title: title,
-        description: description,
+        title,
+        description,
         template_id: templateId,
         lanes: [],
-        columns: [], // ensure TypeScript compliance
+        columns: [],
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       };
     }
 
-    return await response.json();
+    // Normalize navigation to /planner/{id}
+    if (typeof window !== "undefined" && planner?.id) {
+      const currentPath = window.location.pathname;
+      const expectedPath = `/planner/${planner.id}`;
+      if (!currentPath.endsWith(expectedPath)) {
+        window.history.replaceState({}, "", expectedPath);
+      }
+    }
+
+    return planner;
   } catch (error) {
     console.error("Error creating planner:", error);
-
-    // Create a unique ID that's consistent and can be referenced
     const uniqueId = `temp-${Date.now()}-${Math.random()
       .toString(36)
       .substring(2, 10)}`;
     console.log("Creating temporary planner with ID after error:", uniqueId);
-
-    // Return a mock planner
-    return {
+    const planner: Planner = {
       id: uniqueId,
-      title: title,
-      description: description,
+      title,
+      description,
       template_id: templateId,
       lanes: [],
-      columns: [], // ensure column array always present
+      columns: [],
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
+
+    if (typeof window !== "undefined") {
+      const expectedPath = `/planner/${planner.id}`;
+      window.history.replaceState({}, "", expectedPath);
+    }
+
+    return planner;
   }
 }
 
 export async function getPlanner(id: string): Promise<Planner> {
   console.log("[API] getPlanner", { id });
-  const response = await fetch(`${getApiBase()}/planner/${id}`);
+  const response = await fetch(`${getApiBase()}/planner/${id}`, {
+    credentials: "include",
+  });
   if (!response.ok) throw new Error(await response.text());
   return await response.json();
 }

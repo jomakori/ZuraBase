@@ -4,7 +4,10 @@ import { Note } from "./types";
 /** Fetch a note by ID */
 export async function getNote(id: string): Promise<Note> {
   console.log("[API] getNote", { id });
-  const resp = await fetch(`${getApiBase()}/note/${encodeURIComponent(id)}`);
+  const resp = await fetch(`${getApiBase()}/note/${encodeURIComponent(id)}`, {
+    headers: { Accept: "application/json" },
+    credentials: "include",
+  });
   if (!resp.ok) throw new Error(await resp.text());
   return await resp.json();
 }
@@ -17,6 +20,7 @@ export async function saveNote(note: Note): Promise<Note> {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(note),
+    credentials: "include",
   });
   if (!resp.ok) throw new Error(await resp.text());
   return await resp.json();

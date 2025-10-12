@@ -25,19 +25,19 @@ func HandleSaveNote(w http.ResponseWriter, r *http.Request) {
 
 	// Assign user ID if authenticated
 	if userID != "" {
-		noteMap := map[string]interface{}{
-			"id":         note.ID,
-			"user_id":    userID,
-			"text":       note.Text,
-			"content":    note.Content,
-			"cover_url":  note.CoverURL,
-			"created_at": note.CreatedAt,
-			"updated_at": note.UpdatedAt,
-		}
-		_ = noteMap
+		note.UserID = userID
 	}
 
-	savedNote, err := SaveNote(r.Context(), &note)
+	// Always extract/update title when saving to ensure it reflects the latest header
+	if note.Content != "" {
+		note.Title = extractTitleFromContent(note.Content)
+	} else if note.Text != "" {
+		note.Title = extractTitleFromContent(note.Text)
+	} else if note.Title == "" {
+		note.Title = "Untitled Note"
+	}
+
+	savedNote, err := SaveNote(r.Context(), &note, userID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -48,23 +48,52 @@ func HandleSaveNote(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// HandleGetNote handles GET /note/{id}
-func HandleGetNote(w http.ResponseWriter, r *http.Request, id string) {
+// HandleListNotes handles GET /notes?user_id={id}
+func HandleListNotes(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	note, err := GetNote(r.Context(), id)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
+	userID := r.URL.Query().Get("user_id")
+	if userID == "" {
+		http.Error(w, "Missing user_id parameter", http.StatusBadRequest)
 		return
 	}
-	if err := json.NewEncoder(w).Encode(note); err != nil {
+
+	w.Header().Set("Content-Type", "application/json")
+	notes, err := GetNotesByUser(r.Context(), userID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Ensure notes is not null; always return a JSON array not null
+	if notes == nil {
+		notes = []Note{}
+	}
+	if err := json.NewEncoder(w).Encode(notes); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
+
+	// HandleGetNote handles GET /note/{id}
+	func HandleGetNote(w http.ResponseWriter, r *http.Request, id string) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+	
+		w.Header().Set("Content-Type", "application/json")
+		note, err := GetNote(r.Context(), id)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		if err := json.NewEncoder(w).Encode(note); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+	}
 
 // HandleDeleteNote handles DELETE /note/{id}
 func HandleDeleteNote(w http.ResponseWriter, r *http.Request, id string) {

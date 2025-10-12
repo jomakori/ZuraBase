@@ -94,7 +94,7 @@ function App() {
       <section className="border-t border-gray-200 mt-12">
         <div className="max-w-7xl mx-auto py-8 sm:px-6 lg:px-8">
           <h2 className="text-2xl font-semibold text-gray-900 mb-4">
-            Recent Items
+            Dashboard
           </h2>
           <Dashboard />
         </div>

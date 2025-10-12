@@ -95,9 +95,12 @@ export function useSaveHandler(
         // Only update URL and state if we got a valid response
         if (response && response.id) {
           // Update the URL and component state
-          const url = new URL(window.location.href);
-          url.searchParams.set("id", response.id);
-          window.history.pushState(null, "", url.toString());
+          const currentPath = window.location.pathname;
+          const isNote = currentPath.startsWith("/notes");
+          const newPath = isNote
+            ? `/notes/${response.id}`
+            : `/planner/${response.id}`;
+          window.history.pushState(null, "", newPath);
           setQueryParamID(response.id);
         }
 

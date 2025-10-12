@@ -29,10 +29,10 @@ const PlannerApp: React.FC = () => {
     "saved"
   );
 
-  // Get ID from URL query parameter
+  // Extract planner ID strictly from /planner/:id path (no backward compatibility)
   const initialId = (() => {
-    const urlParams = new URLSearchParams(window.location.search);
-    return urlParams.get("id");
+    const pathMatch = window.location.pathname.match(/\/planner\/([^/]+)/);
+    return pathMatch ? pathMatch[1] : null;
   })();
 
   // Use the modular save handler
@@ -386,9 +386,8 @@ const PlannerApp: React.FC = () => {
           setPlanner(newPlanner);
 
           // Update URL with the new planner ID
-          const url = new URL(window.location.href);
-          url.searchParams.set("id", newPlanner.id);
-          window.history.pushState(null, "", url.toString());
+          const expectedPath = `/planner/${newPlanner.id}`;
+          window.history.pushState(null, "", expectedPath);
 
           // Create predefined lanes for the new planner
           await createPredefinedLanes(newPlanner);
