@@ -14,13 +14,30 @@ func HandleSaveNote(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
+
+	userID, _ := r.Context().Value("user_id").(string)
+
 	var note Note
 	if err := json.NewDecoder(r.Body).Decode(&note); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	savedNote, err := SaveNote(r.Context(), &note)
+	// Assign user ID if authenticated
+	if userID != "" {
+		note.UserID = userID
+	}
+
+	// Always extract/update title when saving to ensure it reflects the latest header
+	if note.Content != "" {
+		note.Title = extractTitleFromContent(note.Content)
+	} else if note.Text != "" {
+		note.Title = extractTitleFromContent(note.Text)
+	} else if note.Title == "" {
+		note.Title = "Untitled Note"
+	}
+
+	savedNote, err := SaveNote(r.Context(), &note, userID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -31,23 +48,52 @@ func HandleSaveNote(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// HandleGetNote handles GET /note/{id}
-func HandleGetNote(w http.ResponseWriter, r *http.Request, id string) {
+// HandleListNotes handles GET /notes?user_id={id}
+func HandleListNotes(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	note, err := GetNote(r.Context(), id)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
+	userID := r.URL.Query().Get("user_id")
+	if userID == "" {
+		http.Error(w, "Missing user_id parameter", http.StatusBadRequest)
 		return
 	}
-	if err := json.NewEncoder(w).Encode(note); err != nil {
+
+	w.Header().Set("Content-Type", "application/json")
+	notes, err := GetNotesByUser(r.Context(), userID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Ensure notes is not null; always return a JSON array not null
+	if notes == nil {
+		notes = []Note{}
+	}
+	if err := json.NewEncoder(w).Encode(notes); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
+
+	// HandleGetNote handles GET /note/{id}
+	func HandleGetNote(w http.ResponseWriter, r *http.Request, id string) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+	
+		w.Header().Set("Content-Type", "application/json")
+		note, err := GetNote(r.Context(), id)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		if err := json.NewEncoder(w).Encode(note); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+	}
 
 // HandleDeleteNote handles DELETE /note/{id}
 func HandleDeleteNote(w http.ResponseWriter, r *http.Request, id string) {
@@ -63,17 +109,15 @@ func HandleDeleteNote(w http.ResponseWriter, r *http.Request, id string) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// HandleNoteRequest routes requests to the appropriate handler based on the method and path
+// HandleNoteRequest routes requests to the appropriate handler
 func HandleNoteRequest(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
 
-	// Handle /note endpoint (POST only)
 	if path == "/note" {
 		HandleSaveNote(w, r)
 		return
 	}
 
-	// Handle /note/{id} endpoint (GET, DELETE)
 	if strings.HasPrefix(path, "/note/") {
 		id := path[len("/note/"):]
 		if id == "" {

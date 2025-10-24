@@ -1,6 +1,7 @@
 import React from "react";
 import { NotePencil, ListChecks } from "@phosphor-icons/react";
 import NavBar from "./NavBar";
+import Dashboard from "./Dashboard";
 
 /**
  * Main App component that serves as a landing page for the application.
@@ -15,7 +16,7 @@ function App() {
         <div className="mx-auto max-w-7xl py-12 sm:px-6 lg:px-8">
           <div className="px-4 py-6 sm:px-0">
             <h2 className="text-2xl font-semibold text-gray-900 mb-8">
-              Choose an application
+              Create
             </h2>
 
             <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
@@ -88,6 +89,16 @@ function App() {
           </div>
         </div>
       </main>
+
+      {/* Dashboard Elements Below */}
+      <section className="border-t border-gray-200 mt-12">
+        <div className="max-w-7xl mx-auto py-8 sm:px-6 lg:px-8">
+          <h2 className="text-2xl font-semibold text-gray-900 mb-4">
+            Dashboard
+          </h2>
+          <Dashboard />
+        </div>
+      </section>
     </div>
   );
 }

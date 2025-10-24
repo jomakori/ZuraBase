@@ -12,6 +12,7 @@ import (
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 
+	"zurabase/auth"
 	"zurabase/notes"
 	"zurabase/pexels"
 	"zurabase/planner"
@@ -83,6 +84,7 @@ func main() {
 	// Initialize packages
 	notes.Initialize(mongoClient, "zurabase")
 	planner.Initialize(mongoClient, "zurabase")
+	auth.Initialize(mongoClient, "zurabase")
 
 	if err := planner.InitializeTemplates(context.Background()); err != nil {
 		log.Fatalf("Failed to initialize planner templates: %v", err)
@@ -107,164 +109,153 @@ func main() {
 		}
 	})
 	
-	// Register notes routes
-	mux.HandleFunc("/note", notes.HandleNoteRequest)
-	mux.HandleFunc("/note/", notes.HandleNoteRequest)
-	
-	// Register planner routes
-	mux.HandleFunc("/planner", func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodPost:
-			planner.HandleCreatePlanner(w, r)
-		default:
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	// generic helper to mount all routes (DRY)
+	type route struct {
+		path    string
+		handler http.HandlerFunc
+	}
+	mountRoutes := func(mux *http.ServeMux, routes []route) {
+		for _, r := range routes {
+			mux.HandleFunc(r.path, r.handler)
+			mux.HandleFunc("/api"+r.path, r.handler)
 		}
-	})
-	
-	mux.HandleFunc("/planner/", func(w http.ResponseWriter, r *http.Request) {
-		path := r.URL.Path
-		
-		// Handle /planner/templates
-		if path == "/planner/templates" {
-			planner.HandleGetTemplates(w, r)
-			return
-		}
-		
-		// Handle /planner/templates/{id}
-		if strings.HasPrefix(path, "/planner/templates/") {
-			planner.HandleGetTemplate(w, r)
-			return
-		}
-		
-		// Handle /planner/import
-		if path == "/planner/import" {
-			planner.HandleImportPlannerMarkdown(w, r)
-			return
-		}
-		
-		// Handle /planner/{id}/export
-		if strings.HasSuffix(path, "/export") {
-			planner.HandleExportPlannerMarkdown(w, r)
-			return
-		}
-		
-		// Handle /planner/{id}/lanes/reorder
-		if strings.HasSuffix(path, "/lanes/reorder") {
-			planner.HandleReorderLanes(w, r)
-			return
-		}
-		
-		// Handle /planner/{id}/lane/{laneId}/cards/reorder
-		if strings.Contains(path, "/lane/") && strings.HasSuffix(path, "/cards/reorder") {
-			planner.HandleReorderCards(w, r)
-			return
-		}
-		
-		// Handle /planner/{id}/lane/{laneId}/split
-		if strings.Contains(path, "/lane/") && strings.HasSuffix(path, "/split") {
-			planner.HandleSplitLane(w, r)
-			return
-		}
-		
-		// Handle /planner/{id}/lane/{laneId}/card
-		if strings.Contains(path, "/lane/") && strings.HasSuffix(path, "/card") {
-			planner.HandleAddCard(w, r)
-			return
-		}
-		
-		// Handle /planner/{id}/lane/{laneId}/card/{cardId}
-		if strings.Contains(path, "/lane/") && strings.Contains(path, "/card/") {
-			parts := strings.Split(path, "/")
-			if len(parts) == 7 {
-				switch r.Method {
-				case http.MethodGet:
-					planner.HandleGetCard(w, r)
-				case http.MethodPut:
-					planner.HandleUpdateCard(w, r)
-				case http.MethodDelete:
-					planner.HandleDeleteCard(w, r)
-				default:
-					http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-				}
-				return
-			}
-		}
-		
-		// Handle /planner/{id}/card/{cardId}/move
-		if strings.Contains(path, "/card/") && strings.HasSuffix(path, "/move") {
-			planner.HandleMoveCard(w, r)
-			return
-		}
-		
-		// Handle /planner/{id}/lane
-		if strings.HasSuffix(path, "/lane") {
-			planner.HandleAddLane(w, r)
-			return
-		}
-		
-		// Handle /planner/{id}/lane/{laneId}
-		if strings.Contains(path, "/lane/") {
-			parts := strings.Split(path, "/")
-			if len(parts) == 5 {
-				switch r.Method {
-				case http.MethodPut:
-					planner.HandleUpdateLane(w, r)
-				case http.MethodDelete:
-					planner.HandleDeleteLane(w, r)
-				default:
-					http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-				}
-				return
-			}
-		}
-		
-		// Handle /planner/{id}
-		parts := strings.Split(path, "/")
-		if len(parts) == 3 {
-			switch r.Method {
-			case http.MethodGet:
-				planner.HandleGetPlanner(w, r)
-			case http.MethodPut:
-				planner.HandleUpdatePlanner(w, r)
-			case http.MethodDelete:
-				planner.HandleDeletePlanner(w, r)
-			default:
+	}
+
+	// --- Grouped routes ---
+	// Register notes routes, all protected by AuthMiddleware
+	mux.Handle("/api/note", auth.AuthMiddleware(http.HandlerFunc(notes.HandleNoteRequest)))
+	mux.Handle("/note", auth.AuthMiddleware(http.HandlerFunc(notes.HandleNoteRequest)))
+
+	mux.Handle("/api/note/", auth.AuthMiddleware(http.HandlerFunc(notes.HandleNoteRequest)))
+	mux.Handle("/note/", auth.AuthMiddleware(http.HandlerFunc(notes.HandleNoteRequest)))
+
+	mux.Handle("/api/notes", auth.AuthMiddleware(http.HandlerFunc(notes.HandleListNotes)))
+	mux.Handle("/notes", auth.AuthMiddleware(http.HandlerFunc(notes.HandleListNotes)))
+
+	plannerRoutes := []route{
+		{"/planner/list", planner.HandleListPlanners},
+		{"/planner", func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodPost {
+				planner.HandleCreatePlanner(w, r)
+			} else {
 				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			}
-			return
-		}
-		
-		http.NotFound(w, r)
-	})
+		}},
+		{"/planner/", func(w http.ResponseWriter, r *http.Request) {
+			path := strings.TrimPrefix(r.URL.Path, "/api")
+			switch {
+			case path == "/planner/templates":
+				planner.HandleGetTemplates(w, r)
+			case strings.HasPrefix(path, "/planner/templates/"):
+				planner.HandleGetTemplate(w, r)
+			case path == "/planner/import":
+				planner.HandleImportPlannerMarkdown(w, r)
+			case strings.HasSuffix(path, "/export"):
+				planner.HandleExportPlannerMarkdown(w, r)
+			case strings.HasSuffix(path, "/lanes/reorder"):
+				planner.HandleReorderLanes(w, r)
+			case strings.Contains(path, "/lane/") && strings.HasSuffix(path, "/cards/reorder"):
+				planner.HandleReorderCards(w, r)
+			case strings.Contains(path, "/lane/") && strings.HasSuffix(path, "/split"):
+				planner.HandleSplitLane(w, r)
+			case strings.Contains(path, "/lane/") && strings.HasSuffix(path, "/card"):
+				planner.HandleAddCard(w, r)
+			case strings.Contains(path, "/lane/") && strings.Contains(path, "/card/"):
+				parts := strings.Split(path, "/")
+				if len(parts) == 7 {
+					switch r.Method {
+					case http.MethodGet:
+						planner.HandleGetCard(w, r)
+					case http.MethodPut:
+						planner.HandleUpdateCard(w, r)
+					case http.MethodDelete:
+						planner.HandleDeleteCard(w, r)
+					default:
+						http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+					}
+					return
+				}
+			case strings.Contains(path, "/card/") && strings.HasSuffix(path, "/move"):
+				planner.HandleMoveCard(w, r)
+			case strings.HasSuffix(path, "/lane"):
+				planner.HandleAddLane(w, r)
+			case strings.Contains(path, "/lane/"):
+				parts := strings.Split(path, "/")
+				if len(parts) == 5 {
+					switch r.Method {
+					case http.MethodPut:
+						planner.HandleUpdateLane(w, r)
+					case http.MethodDelete:
+						planner.HandleDeleteLane(w, r)
+					default:
+						http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+					}
+					return
+				}
+			default:
+				parts := strings.Split(path, "/")
+				if len(parts) == 3 {
+					switch r.Method {
+					case http.MethodGet:
+						planner.HandleGetPlanner(w, r)
+					case http.MethodPut:
+						planner.HandleUpdatePlanner(w, r)
+					case http.MethodDelete:
+						planner.HandleDeletePlanner(w, r)
+					default:
+						http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+					}
+					return
+				}
+				http.NotFound(w, r)
+			}
+		}},
+	}
+
+	imageRoutes := []route{
+		{"/images/", func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodGet {
+				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+			query := r.URL.Path[len("/images/"):]
+			if query == "" {
+				http.Error(w, "Query parameter is required", http.StatusBadRequest)
+				return
+			}
+			photos, err := pexels.SearchPhoto(r.Context(), query)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(photos)
+		}},
+	}
+
+	authRoutes := []route{
+		{"/auth/google", auth.HandleGoogleLogin},
+		{"/auth/google/callback", auth.HandleGoogleCallback},
+		{"/auth/user", func(w http.ResponseWriter, r *http.Request) {
+			auth.AuthMiddleware(http.HandlerFunc(auth.HandleGetCurrentUser)).ServeHTTP(w, r)
+		}},
+		{"/auth/logout", auth.HandleLogout},
+	}
+
+	// --- Register all grouped routes ---
+	// mountRoutes(mux, notesRoutes) // Removed, now explicitly registered above
+	mountRoutes(mux, plannerRoutes)
+	mountRoutes(mux, imageRoutes)
+	mountRoutes(mux, authRoutes)
+
 	
-	// Register image search route
-	mux.HandleFunc("/images/", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		
-		query := r.URL.Path[len("/images/"):]
-		if query == "" {
-			http.Error(w, "Query parameter is required", http.StatusBadRequest)
-			return
-		}
-		
-		// Forward the request to the internal Pexels service
-		photos, err := pexels.SearchPhoto(r.Context(), query)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		
-		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(photos); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-		}
-	})
-	
+	// Register authentication routes
+
+	// Wrap existing mux with optional authentication middleware
+	protectedMux := auth.OptionalAuthMiddleware(mux)
+
 	// Create handler chain with CORS middleware
-	handler := CORS(mux)
+	handler := CORS(protectedMux)
 	
 	log.Println("Starting server on :8080")
 	if err := http.ListenAndServe(":8080", handler); err != nil {

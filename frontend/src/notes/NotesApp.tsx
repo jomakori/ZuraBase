@@ -15,10 +15,10 @@ interface NotesAppProps {
 }
 
 function NotesApp({ onInit }: NotesAppProps) {
-  // Get ID from URL query parameter
+  // Extract note ID strictly from /notes/:id path (no backward compatibility)
   const initialId = (() => {
-    const urlParams = new URLSearchParams(window.location.search);
-    return urlParams.get("id");
+    const pathMatch = window.location.pathname.match(/\/notes\/([^/]+)/);
+    return pathMatch ? pathMatch[1] : null;
   })();
 
   const [isLoading, setIsLoading] = useState(true);
@@ -53,12 +53,17 @@ After saving the document you will get a link that you can share.
   // Use the modular save handler
   const saveNoteWrapper = async (id: string | null, data: any) => {
     const noteId = id || uuidv4();
-    console.log("[NOTES] Saving note", { id: noteId });
-    return saveNote({
-      text: data.text,
-      cover_url: data.cover_url,
+    console.log("[NOTES] Saving note", { id: noteId, data });
+
+    // Ensure markdown content is also sent as 'content' for backend title extraction
+    const payload = {
       id: noteId,
-    });
+      text: data.text || "",
+      content: data.text || "",
+      cover_url: data.cover_url || "",
+    };
+
+    return saveNote(payload);
   };
 
   // Create a memoized content object that updates when content or coverImage changes
@@ -152,6 +157,11 @@ After saving the document you will get a link that you can share.
       await saveDocument();
       setHasUnsavedChanges(false);
       setSaveState("saved");
+      const currentPath = window.location.pathname;
+      const expectedPath = queryParamID ? `/notes/${queryParamID}` : "";
+      if (expectedPath && currentPath !== expectedPath) {
+        window.history.replaceState({}, "", expectedPath);
+      }
     } catch (err) {
       console.error(err);
       setSaveState("unsaved");

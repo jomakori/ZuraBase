@@ -40,7 +40,7 @@ func AddCard(ctx context.Context, laneID, title, content string, position int) (
 	}
 
 	// Create the new card
-	cardID := generateID()
+	cardID := GenerateID()
 	card := PlannerCard{
 		ID:        cardID,
 		LaneID:    laneID,
