@@ -12,7 +12,9 @@ import (
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 
+	"zurabase/api/strands"
 	"zurabase/auth"
+	"zurabase/models"
 	"zurabase/notes"
 	"zurabase/pexels"
 	"zurabase/planner"
@@ -43,10 +45,10 @@ func CORS(next http.Handler) http.Handler {
 		if allowedOrigin == "" {
 			log.Printf("[CORS] ERROR: UI_ENDPOINT environment variable is not set. CORS will not work properly.")
 		}
-		
+
 		// Log CORS settings without exposing full details
 		fmt.Printf("[CORS] CORS configured for API\n")
-		
+
 		// Set CORS headers
 		w.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
@@ -85,12 +87,18 @@ func main() {
 	notes.Initialize(mongoClient, "zurabase")
 	planner.Initialize(mongoClient, "zurabase")
 	auth.Initialize(mongoClient, "zurabase")
+	models.Initialize(mongoClient, "zurabase")
+
+	// Initialize strands module
+	if err := strands.Initialize(); err != nil {
+		log.Printf("Warning: Strands initialization error: %v", err)
+	}
 
 	if err := planner.InitializeTemplates(context.Background()); err != nil {
 		log.Fatalf("Failed to initialize planner templates: %v", err)
 	}
 	mux := http.NewServeMux()
-	
+
 	// Register health check route
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		ctx := context.Background()
@@ -108,7 +116,7 @@ func main() {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
 	})
-	
+
 	// generic helper to mount all routes (DRY)
 	type route struct {
 		path    string
@@ -248,7 +256,18 @@ func main() {
 	mountRoutes(mux, imageRoutes)
 	mountRoutes(mux, authRoutes)
 
-	
+	// Register strands routes - using direct registration instead of mountRoutes
+	// because we need to use auth middleware which returns http.Handler not http.HandlerFunc
+	mux.Handle("/strands", auth.AuthMiddleware(http.HandlerFunc(strands.HandleStrandsRequest)))
+	mux.Handle("/api/strands", auth.AuthMiddleware(http.HandlerFunc(strands.HandleStrandsRequest)))
+
+	mux.Handle("/strands/", auth.AuthMiddleware(http.HandlerFunc(strands.HandleStrandsRequest)))
+	mux.Handle("/api/strands/", auth.AuthMiddleware(http.HandlerFunc(strands.HandleStrandsRequest)))
+
+	// WhatsApp webhook doesn't require authentication
+	mux.HandleFunc("/strands/whatsapp", strands.HandleWhatsAppWebhook)
+	mux.HandleFunc("/api/strands/whatsapp", strands.HandleWhatsAppWebhook)
+
 	// Register authentication routes
 
 	// Wrap existing mux with optional authentication middleware
@@ -256,7 +275,7 @@ func main() {
 
 	// Create handler chain with CORS middleware
 	handler := CORS(protectedMux)
-	
+
 	log.Println("Starting server on :8080")
 	if err := http.ListenAndServe(":8080", handler); err != nil {
 		log.Fatalf("Server failed: %s", err)
