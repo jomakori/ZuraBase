@@ -1,8 +1,8 @@
 import React from "react";
-import { NotePencil, ListChecks, House } from "@phosphor-icons/react";
+import { NotePencil, ListChecks, House, Sparkle } from "@phosphor-icons/react";
 
 interface NavBarProps {
-  currentPage: "home" | "notes" | "planner";
+  currentPage: "home" | "notes" | "planner" | "strands";
   isAuthenticated?: boolean;
 }
 
@@ -53,6 +53,17 @@ const NavBar: React.FC<NavBarProps> = ({ currentPage }) => {
               >
                 <ListChecks size={20} className="mr-1" />
                 Planner
+              </a>
+              <a
+                href="/strands"
+                className={`flex items-center px-3 py-2 rounded-md text-sm font-medium ${
+                  currentPage === "strands"
+                    ? "bg-purple-100 text-purple-900"
+                    : "text-gray-600 hover:bg-purple-50 hover:text-purple-900"
+                }`}
+              >
+                <Sparkle size={20} className="mr-1" />
+                Strands
               </a>
             </nav>
           </div>

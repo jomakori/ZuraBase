@@ -1,5 +1,5 @@
 import React from "react";
-import { NotePencil, ListChecks } from "@phosphor-icons/react";
+import { NotePencil, ListChecks, Sparkle } from "@phosphor-icons/react";
 import NavBar from "./NavBar";
 import Dashboard from "./Dashboard";
 
@@ -19,7 +19,7 @@ function App() {
               Create
             </h2>
 
-            <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
+            <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
               {/* Notes Card */}
               <div className="bg-white overflow-hidden shadow rounded-lg">
                 <div className="px-4 py-5 sm:p-6">
@@ -81,6 +81,35 @@ function App() {
                       className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
                     >
                       Open Planner
+                    </a>
+                  </div>
+                </div>
+              </div>
+
+              {/* Strands Card */}
+              <div className="bg-white overflow-hidden shadow rounded-lg">
+                <div className="px-4 py-5 sm:p-6">
+                  <div className="flex items-center">
+                    <div className="flex-shrink-0 bg-purple-500 rounded-md p-3">
+                      <Sparkle size={24} weight="bold" className="text-white" />
+                    </div>
+                    <div className="ml-5">
+                      <h3 className="text-lg leading-6 font-medium text-gray-900">
+                        Strands
+                      </h3>
+                      <p className="mt-2 text-sm text-gray-500">
+                        Capture and organize scattered insights from WhatsApp,
+                        images, or text snippets into smart, interconnected
+                        knowledge entries.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="mt-6">
+                    <a
+                      href="/strands"
+                      className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
+                    >
+                      Open Strands
                     </a>
                   </div>
                 </div>
