@@ -1,9 +1,9 @@
 <div id="top">
 
 <!-- HEADER STYLE: COMPACT -->
-<img src="images/markdown_notes.png" width="50%" align="center" style="margin-right: 15px">
+<img src="images/ZuraBase.png" width="50%" align="center" style="margin-right: 15px">
 
-# Zurabase
+---
 
 <!-- BADGES -->
 <img src="https://img.shields.io/github/actions/workflow/status/jomakori/zurabase/1-staging.yml?branch=staging&label=Deploy%20Staging&style=flat" alt="Deploy Staging">
@@ -99,33 +99,33 @@ devbox run test_be
 
 ### Notes API
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/note/:id` | Retrieve a note by ID |
-| POST | `/note` | Create a new note (or update an existing one) |
-| GET | `/images/:query` | Search for images by using the [Pexels API](https://www.pexels.com/api/) |
+| Method | Endpoint         | Description                                                              |
+| ------ | ---------------- | ------------------------------------------------------------------------ |
+| GET    | `/note/:id`      | Retrieve a note by ID                                                    |
+| POST   | `/note`          | Create a new note (or update an existing one)                            |
+| GET    | `/images/:query` | Search for images by using the [Pexels API](https://www.pexels.com/api/) |
 
 ### Planner API
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/planner` | Create a new planner board |
-| GET | `/planner/:id` | Retrieve a planner board by ID |
-| PUT | `/planner/:id` | Update a planner board's title and description |
-| DELETE | `/planner/:id` | Delete a planner board |
-| GET | `/planner/templates` | Get available planner templates |
-| GET | `/planner/:id/export` | Export a planner as markdown |
-| POST | `/planner/import` | Import a planner from markdown |
-| POST | `/planner/:id/lane` | Add a new lane to a planner |
-| PUT | `/planner/:id/lane/:laneId` | Update a lane |
-| DELETE | `/planner/:id/lane/:laneId` | Delete a lane |
-| POST | `/planner/:id/lane/:laneId/split` | Split a lane into two |
-| POST | `/planner/:id/lane/:laneId/card` | Add a card to a lane |
-| PUT | `/planner/:id/lane/:laneId/card/:cardId` | Update a card |
-| DELETE | `/planner/:id/lane/:laneId/card/:cardId` | Delete a card |
-| POST | `/planner/:id/card/:cardId/move` | Move a card to a different lane |
-| POST | `/planner/:id/lanes/reorder` | Reorder lanes |
-| POST | `/planner/:id/lane/:laneId/cards/reorder` | Reorder cards in a lane |
+| Method | Endpoint                                  | Description                                    |
+| ------ | ----------------------------------------- | ---------------------------------------------- |
+| POST   | `/planner`                                | Create a new planner board                     |
+| GET    | `/planner/:id`                            | Retrieve a planner board by ID                 |
+| PUT    | `/planner/:id`                            | Update a planner board's title and description |
+| DELETE | `/planner/:id`                            | Delete a planner board                         |
+| GET    | `/planner/templates`                      | Get available planner templates                |
+| GET    | `/planner/:id/export`                     | Export a planner as markdown                   |
+| POST   | `/planner/import`                         | Import a planner from markdown                 |
+| POST   | `/planner/:id/lane`                       | Add a new lane to a planner                    |
+| PUT    | `/planner/:id/lane/:laneId`               | Update a lane                                  |
+| DELETE | `/planner/:id/lane/:laneId`               | Delete a lane                                  |
+| POST   | `/planner/:id/lane/:laneId/split`         | Split a lane into two                          |
+| POST   | `/planner/:id/lane/:laneId/card`          | Add a card to a lane                           |
+| PUT    | `/planner/:id/lane/:laneId/card/:cardId`  | Update a card                                  |
+| DELETE | `/planner/:id/lane/:laneId/card/:cardId`  | Delete a card                                  |
+| POST   | `/planner/:id/card/:cardId/move`          | Move a card to a different lane                |
+| POST   | `/planner/:id/lanes/reorder`              | Reorder lanes                                  |
+| POST   | `/planner/:id/lane/:laneId/cards/reorder` | Reorder cards in a lane                        |
 
 ## Contributing
 - **🐛 [Report Issues](https://github.com/jomakori/zurabase/issues)**: Submit bugs found or log feature requests for the `zurabase` project.
