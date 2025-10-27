@@ -28,7 +28,7 @@ func Initialize() error {
 		log.Printf("Warning: AI client initialization failed: %v. Using mock implementation.", err)
 		// Continue without failing - we'll use mock implementation
 	} else {
-		log.Printf("✅ AI client initialized successfully")Be
+		log.Printf("✅ AI client initialized successfully")
 		// AI service is available, sync any unsynced strands
 		go autoSyncUnsyncedStrands()
 	}
