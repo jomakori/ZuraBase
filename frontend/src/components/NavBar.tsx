@@ -1,5 +1,6 @@
 import React from "react";
 import { NotePencil, ListChecks, House, Sparkle } from "@phosphor-icons/react";
+import { Link } from "react-router-dom";
 
 interface NavBarProps {
   currentPage: "home" | "notes" | "planner" | "strands";
@@ -10,6 +11,12 @@ import { useAuth } from "../auth/AuthContext";
 import UserProfileDropdown from "./UserProfileDropdown";
 
 const NavBar: React.FC<NavBarProps> = ({ currentPage }) => {
+  const { user } = useAuth();
+
+  const handleProtectedAccess = () => {
+    alert("Login required: Please sign in to access Strands.");
+  };
+
   return (
     <div className="bg-white shadow">
       <div className="mx-auto max-w-7xl px-4 py-4 sm:px-6 lg:px-8">
@@ -21,8 +28,8 @@ const NavBar: React.FC<NavBarProps> = ({ currentPage }) => {
               className="h-8 w-auto mr-4 object-contain"
             />
             <nav className="flex space-x-4">
-              <a
-                href="/"
+              <Link
+                to="/"
                 className={`flex items-center px-3 py-2 rounded-md text-sm font-medium ${
                   currentPage === "home"
                     ? "bg-gray-100 text-gray-900"
@@ -31,9 +38,9 @@ const NavBar: React.FC<NavBarProps> = ({ currentPage }) => {
               >
                 <House size={20} className="mr-1" />
                 Home
-              </a>
-              <a
-                href="/notes"
+              </Link>
+              <Link
+                to="/notes"
                 className={`flex items-center px-3 py-2 rounded-md text-sm font-medium ${
                   currentPage === "notes"
                     ? "bg-blue-100 text-blue-900"
@@ -42,9 +49,9 @@ const NavBar: React.FC<NavBarProps> = ({ currentPage }) => {
               >
                 <NotePencil size={20} className="mr-1" />
                 Notes
-              </a>
-              <a
-                href="/planner"
+              </Link>
+              <Link
+                to="/planner"
                 className={`flex items-center px-3 py-2 rounded-md text-sm font-medium ${
                   currentPage === "planner"
                     ? "bg-green-100 text-green-900"
@@ -53,18 +60,28 @@ const NavBar: React.FC<NavBarProps> = ({ currentPage }) => {
               >
                 <ListChecks size={20} className="mr-1" />
                 Planner
-              </a>
-              <a
-                href="/strands"
-                className={`flex items-center px-3 py-2 rounded-md text-sm font-medium ${
-                  currentPage === "strands"
-                    ? "bg-purple-100 text-purple-900"
-                    : "text-gray-600 hover:bg-purple-50 hover:text-purple-900"
-                }`}
-              >
-                <Sparkle size={20} className="mr-1" />
-                Strands
-              </a>
+              </Link>
+              {user ? (
+                <Link
+                  to="/strands"
+                  className={`flex items-center px-3 py-2 rounded-md text-sm font-medium ${
+                    currentPage === "strands"
+                      ? "bg-purple-100 text-purple-900"
+                      : "text-gray-600 hover:bg-purple-50 hover:text-purple-900"
+                  }`}
+                >
+                  <Sparkle size={20} className="mr-1" />
+                  Strands
+                </Link>
+              ) : (
+                <button
+                  onClick={handleProtectedAccess}
+                  className="flex items-center px-3 py-2 rounded-md text-sm font-medium text-gray-500 hover:bg-gray-50 hover:text-gray-700"
+                >
+                  <Sparkle size={20} className="mr-1" />
+                  Strands 🔒
+                </button>
+              )}
             </nav>
           </div>
           <div>

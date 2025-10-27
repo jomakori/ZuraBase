@@ -14,8 +14,8 @@ func HandleStrandsRequest(w http.ResponseWriter, r *http.Request) {
 
 	// Handle different routes
 	switch {
-	case path == "/strands/ingest":
-		HandleIngestStrand(w, r)
+	case path == "/strands/sync":
+		HandleSyncStrandsWithAI(w, r)
 		return
 
 	case path == "/strands/tags":
@@ -23,7 +23,18 @@ func HandleStrandsRequest(w http.ResponseWriter, r *http.Request) {
 		return
 
 	case path == "/strands":
-		HandleGetStrands(w, r)
+		if r.Method == http.MethodPost {
+			// Handle strand creation
+			HandleCreateStrand(w, r)
+			return
+		}
+
+		if r.Method == http.MethodGet {
+			HandleGetStrands(w, r)
+			return
+		}
+
+		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
 		return
 
 	case strings.HasPrefix(path, "/strands/"):

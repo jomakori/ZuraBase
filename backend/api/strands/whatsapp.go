@@ -2,9 +2,7 @@ package strands
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"os"
@@ -68,39 +66,54 @@ type WhatsAppMediaResponse struct {
 }
 
 // HandleWhatsAppWebhook processes incoming webhook requests from WhatsApp
-func HandleWhatsAppWebhook(w http.ResponseWriter, r *http.Request) {
-	// Verify request method
-	if r.Method == http.MethodGet {
-		handleWhatsAppVerification(w, r)
-		return
-	}
 
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
+var whatsappService *services.WhatsAppService
 
-	// Read and parse the request body
-	body, err := io.ReadAll(r.Body)
+// InitializeWhatsApp sets up the persistent WhatsApp connection for the backend
+func InitializeWhatsApp(ctx context.Context) error {
+	var err error
+	whatsappService, err = services.NewWhatsAppService(ctx)
 	if err != nil {
-		log.Printf("Error reading WhatsApp webhook body: %v", err)
-		http.Error(w, "Error reading request body", http.StatusBadRequest)
-		return
+		return fmt.Errorf("failed to initialize WhatsApp service: %w", err)
 	}
 
-	var message WhatsAppMessage
-	if err := json.Unmarshal(body, &message); err != nil {
-		log.Printf("Error parsing WhatsApp webhook JSON: %v", err)
-		http.Error(w, "Error parsing JSON", http.StatusBadRequest)
-		return
-	}
+	whatsappService.AddHandler(func(from, text string) {
+		log.Printf("📩 WhatsApp message from %s: %s", from, text)
+		go func() {
+			aiClient, err := services.NewAIClient()
+			if err != nil {
+				log.Printf("Error creating AI client: %v", err)
+				return
+			}
+			tagService := services.NewTagService(aiClient)
+			strand := &models.Strand{
+				ID:        uuid.New().String(),
+				UserID:    from,
+				Content:   text,
+				Source:    "whatsapp",
+				Tags:      []string{"whatsapp", "text"},
+				CreatedAt: time.Now(),
+				UpdatedAt: time.Now(),
+			}
+			tags, summary, err := tagService.ExtractTagsFromContent(ctx, text, "whatsapp")
+			if err == nil {
+				strand.Tags = tagService.MergeTags(strand.Tags, tags)
+				strand.Summary = summary
+			}
+			if _, err := models.SaveStrand(ctx, strand); err != nil {
+				log.Printf("Error saving WhatsApp strand: %v", err)
+			}
+		}()
+	})
 
-	// Process the message asynchronously
-	go processWhatsAppMessage(r.Context(), message)
+	return nil
+}
 
-	// Respond with success to acknowledge receipt
+// HandleWhatsAppWebhook is now a stub for backward compatibility, instructing users to connect via WebSocket or persistent connection
+func HandleWhatsAppWebhook(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(`{"status": "received"}`))
+	w.Write([]byte(`{"status":"ok","message":"WhatsApp Webhook replaced by persistent multi-device connection"}`))
 }
 
 // handleWhatsAppVerification handles the verification request from WhatsApp

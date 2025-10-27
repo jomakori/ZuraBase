@@ -5,6 +5,7 @@ import {
   StrandResponse,
   StrandQueryParams,
 } from "./types";
+import { handleAuthError, getNetworkErrorMessage } from "../utils/authRefresh";
 
 const API_BASE = getApiBase();
 
@@ -63,19 +64,49 @@ export const StrandsApi = {
    * @returns Promise with the strand response
    */
   async getStrand(id: string): Promise<StrandResponse> {
-    const response = await fetch(`${API_BASE}/strands/${id}`, {
-      method: "GET",
-      credentials: "include",
-      headers: {
-        "Content-Type": "application/json",
-      },
-    });
+    try {
+      const response = await fetch(`${API_BASE}/strands/${id}`, {
+        method: "GET",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+        },
+      });
 
-    if (!response.ok) {
-      throw new Error(`Failed to fetch strand: ${response.statusText}`);
+      if (!response.ok) {
+        // Handle authentication errors
+        if (response.status === 401) {
+          await handleAuthError(response.status);
+        }
+
+        const errorText = await response.text();
+        throw new Error(
+          `Failed to fetch strand: ${response.status} ${
+            response.statusText
+          } - ${errorText || "No response body"}`
+        );
+      }
+
+      return await response.json();
+    } catch (err) {
+      console.error(`Error in getStrand(${id}):`, err);
+
+      // Check if it's a network error
+      if (err instanceof TypeError && err.message.includes("Failed to fetch")) {
+        console.warn("Network error detected, server might be unavailable");
+      } else if (
+        err instanceof TypeError &&
+        err.message.includes("net::ERR_CONNECTION_REFUSED")
+      ) {
+        console.warn(
+          "Connection refused error detected, server might be restarting"
+        );
+        // Wait a moment before propagating the error to allow server to restart
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+      }
+
+      throw err;
     }
-
-    return await response.json();
   },
 
   /**
@@ -83,21 +114,35 @@ export const StrandsApi = {
    * @param strandRequest The strand data to create
    * @returns Promise with the created strand response
    */
+  /**
+   * Create a new strand
+   * The strand will be saved immediately and queued for AI processing if available
+   * @param strandRequest The strand data to create
+   * @returns Promise with the created strand response
+   */
   async createStrand(strandRequest: StrandRequest): Promise<StrandResponse> {
-    const response = await fetch(`${API_BASE}/strands/ingest`, {
-      method: "POST",
-      credentials: "include",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(strandRequest),
-    });
+    try {
+      const response = await fetch(`${API_BASE}/strands`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(strandRequest),
+      });
 
-    if (!response.ok) {
-      throw new Error(`Failed to create strand: ${response.statusText}`);
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(
+          `Failed to create strand: ${response.status} ${
+            response.statusText
+          } - ${text || "No response body"}`
+        );
+      }
+
+      return await response.json();
+    } catch (err) {
+      console.error("Error creating strand:", err);
+      throw err;
     }
-
-    return await response.json();
   },
 
   /**
@@ -110,20 +155,45 @@ export const StrandsApi = {
     id: string,
     strandRequest: StrandRequest
   ): Promise<StrandResponse> {
-    const response = await fetch(`${API_BASE}/strands/${id}`, {
-      method: "PUT",
-      credentials: "include",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(strandRequest),
-    });
+    try {
+      const response = await fetch(`${API_BASE}/strands/${id}`, {
+        method: "PUT",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(strandRequest),
+      });
 
-    if (!response.ok) {
-      throw new Error(`Failed to update strand: ${response.statusText}`);
+      if (!response.ok) {
+        // Handle authentication errors
+        if (response.status === 401) {
+          await handleAuthError(response.status);
+        }
+
+        const errorText = await response.text();
+        throw new Error(
+          `Failed to update strand: ${response.status} ${
+            response.statusText
+          } - ${errorText || "No response body"}`
+        );
+      }
+
+      return await response.json();
+    } catch (err) {
+      console.error(`Error in updateStrand(${id}):`, err);
+
+      // Check if it's a network error
+      if (err instanceof TypeError && err.message.includes("Failed to fetch")) {
+        console.warn(
+          "Network error detected during strand update, server might be unavailable"
+        );
+        // Show a user-friendly message
+        alert(getNetworkErrorMessage(err));
+      }
+
+      throw err;
     }
-
-    return await response.json();
   },
 
   /**

@@ -34,8 +34,11 @@ const TagChip: React.FC<TagChipProps> = ({
     }
   };
 
+  const uniqueKey = `${tag}-${Math.random().toString(36).substring(2, 8)}`;
+
   return (
     <div
+      key={uniqueKey}
       className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800 ${
         clickable ? "cursor-pointer hover:bg-blue-200" : ""
       } ${className}`}

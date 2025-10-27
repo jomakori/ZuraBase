@@ -58,9 +58,9 @@ const StrandCard: React.FC<StrandCardProps> = ({
 
         {/* Tags */}
         <div className="flex flex-wrap gap-2 mb-4">
-          {strand.tags.map((tag) => (
+          {strand.tags.map((tag, index) => (
             <TagChip
-              key={tag}
+              key={`${tag}-${index}`}
               tag={tag}
               clickable={!!onTagClick}
               onClick={onTagClick}

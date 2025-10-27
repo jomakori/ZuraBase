@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"sort"
 	"strings"
@@ -30,6 +31,42 @@ func (s *TagService) ExtractTagsFromContent(ctx context.Context, content, source
 	if err != nil {
 		log.Printf("Error analyzing content: %v. Falling back to mock analysis.", err)
 		// Fall back to mock analysis if the AI service is unavailable
+		analysis, err = s.aiClient.MockAnalyzeContent(ctx, content, source)
+		if err != nil {
+			return nil, "", err
+		}
+	}
+
+	// Process and normalize tags
+	normalizedTags := s.normalizeTags(analysis.Tags)
+
+	return normalizedTags, analysis.Summary, nil
+}
+
+// ExtractTagsFromContentWithContext uses the AI client to extract tags from content with additional context
+func (s *TagService) ExtractTagsFromContentWithContext(ctx context.Context, content, source string, relatedStrands []models.Strand) ([]string, string, error) {
+	log.Printf("Extracting tags from content with source: %s and %d related strands for context", source, len(relatedStrands))
+
+	// Build context from related strands
+	contextContent := content
+	if len(relatedStrands) > 0 {
+		contextBuilder := strings.Builder{}
+		contextBuilder.WriteString("Previous related content for context:\n")
+		for i, related := range relatedStrands {
+			if i < 5 { // Limit to 5 related strands to avoid overwhelming the AI
+				contextBuilder.WriteString(fmt.Sprintf("- %s (tags: %s)\n", related.Summary, strings.Join(related.Tags, ", ")))
+			}
+		}
+		contextBuilder.WriteString("\nCurrent content to analyze:\n")
+		contextBuilder.WriteString(content)
+		contextContent = contextBuilder.String()
+	}
+
+	// Use the AI client to analyze the content with context
+	analysis, err := s.aiClient.AnalyzeContent(ctx, contextContent, source)
+	if err != nil {
+		log.Printf("Error analyzing content with context: %v. Falling back to basic analysis.", err)
+		// Fall back to basic analysis if the AI service is unavailable
 		analysis, err = s.aiClient.MockAnalyzeContent(ctx, content, source)
 		if err != nil {
 			return nil, "", err

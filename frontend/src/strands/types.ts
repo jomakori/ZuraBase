@@ -13,6 +13,7 @@ export interface Strand {
   tags: string[];
   summary: string;
   related_ids: string[];
+  synced_with_ai: boolean; // Whether the strand has been processed by AI
   created_at: string;
   updated_at: string;
 }

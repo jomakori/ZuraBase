@@ -1,6 +1,5 @@
 import React, { useEffect, useState, useRef, useCallback } from "react";
 import { Share, FloppyDisk } from "@phosphor-icons/react";
-import NavBar from "../components/NavBar";
 import Board from "./components/Board";
 import PlannerWizard from "./components/PlannerWizard";
 import {
@@ -532,9 +531,6 @@ const PlannerApp: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Navigation */}
-      <NavBar currentPage="planner" />
-
       {/* Header */}
       <header className="bg-white border-b">
         <div className="mx-auto max-w-7xl px-4 py-4 sm:px-6 lg:px-8">

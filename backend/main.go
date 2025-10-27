@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -39,29 +38,21 @@ func HealthCheck(ctx context.Context) (*HealthCheckResponse, error) {
 // CORS middleware adds the necessary CORS headers to allow cross-origin requests
 func CORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Get allowed origin from UI_ENDPOINT environment variable
-		allowedOrigin := os.Getenv("UI_ENDPOINT")
-		// If empty, log an error but continue with empty value (which will block all CORS)
-		if allowedOrigin == "" {
-			log.Printf("[CORS] ERROR: UI_ENDPOINT environment variable is not set. CORS will not work properly.")
+		origin := r.Header.Get("Origin")
+		if origin == "" {
+			origin = "*"
 		}
-
-		// Log CORS settings without exposing full details
-		fmt.Printf("[CORS] CORS configured for API\n")
-
-		// Set CORS headers
-		w.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
+		w.Header().Set("Access-Control-Allow-Origin", origin)
+		w.Header().Set("Vary", "Origin")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
 
-		// Handle preflight requests
 		if r.Method == "OPTIONS" {
-			w.WriteHeader(http.StatusOK)
+			w.WriteHeader(http.StatusNoContent)
 			return
 		}
 
-		// Call the next handler
 		next.ServeHTTP(w, r)
 	})
 }
@@ -89,9 +80,22 @@ func main() {
 	auth.Initialize(mongoClient, "zurabase")
 	models.Initialize(mongoClient, "zurabase")
 
-	// Initialize strands module
+	// ✅ Ensure models (i.e., strands collection) are initialized before strands module uses them
+	log.Println("✅ MongoDB models initialized successfully")
+
+	// Initialize strands module (AI + Tag Service)
 	if err := strands.Initialize(); err != nil {
 		log.Printf("Warning: Strands initialization error: %v", err)
+	} else {
+		log.Println("✅ Strands module initialized successfully")
+	}
+
+	// Initialize persistent WhatsApp connection
+	ctx := context.Background()
+	if err := strands.InitializeWhatsApp(ctx); err != nil {
+		log.Printf("Warning: WhatsApp initialization failed: %v", err)
+	} else {
+		log.Println("✅ WhatsApp integration initialized successfully")
 	}
 
 	if err := planner.InitializeTemplates(context.Background()); err != nil {

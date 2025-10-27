@@ -1,6 +1,7 @@
 package strands
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -26,10 +27,48 @@ func Initialize() error {
 	if err != nil {
 		log.Printf("Warning: AI client initialization failed: %v. Using mock implementation.", err)
 		// Continue without failing - we'll use mock implementation
+	} else {
+		log.Printf("✅ AI client initialized successfully")Be
+		// AI service is available, sync any unsynced strands
+		go autoSyncUnsyncedStrands()
 	}
 
 	tagService = services.NewTagService(aiClient)
 	return nil
+}
+
+// autoSyncUnsyncedStrands automatically syncs strands that haven't been synced with AI
+func autoSyncUnsyncedStrands() {
+	if tagService == nil {
+		return
+	}
+
+	ctx := context.Background()
+
+	// Get all unsynced strands
+	// Note: This is a simplified implementation - in production you'd want to paginate
+	// and handle this more carefully for large datasets
+	strands, err := models.GetUnsyncedStrands(ctx)
+	if err != nil {
+		log.Printf("Error getting unsynced strands for auto-sync: %v", err)
+		return
+	}
+
+	if len(strands) > 0 {
+		log.Printf("Auto-syncing %d unsynced strands with AI...", len(strands))
+		syncedCount := 0
+
+		for i := range strands {
+			// For auto-sync, only sync strands that haven't been synced before
+			if !strands[i].SyncedWithAI {
+				// Use the same enrichment function we use for new strands
+				enrichStrandWithAI(ctx, &strands[i])
+				syncedCount++
+			}
+		}
+
+		log.Printf("✅ Auto-synced %d/%d strands with AI", syncedCount, len(strands))
+	}
 }
 
 // StrandRequest represents a request to create or update a strand
@@ -50,10 +89,18 @@ type StrandResponse struct {
 	Limit   int             `json:"limit,omitempty"`
 }
 
-// HandleIngestStrand handles POST /strands/ingest
-func HandleIngestStrand(w http.ResponseWriter, r *http.Request) {
+// HandleCreateStrand handles POST /strands
+// This is a simplified version that separates strand saving from AI enrichment
+func HandleCreateStrand(w http.ResponseWriter, r *http.Request) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("HandleCreateStrand: recovered from panic: %v", r)
+			http.Error(w, `{"error": "internal server error due to panic"}`, http.StatusInternalServerError)
+		}
+	}()
+
 	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		http.Error(w, `{"error": "method not allowed"}`, http.StatusMethodNotAllowed)
 		return
 	}
 
@@ -69,13 +116,14 @@ func HandleIngestStrand(w http.ResponseWriter, r *http.Request) {
 	// Parse request body
 	var req StrandRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		log.Printf("HandleCreateStrand: error decoding request body: %v", err)
+		http.Error(w, `{"error": "invalid request body"}`, http.StatusBadRequest)
 		return
 	}
 
 	// Validate request
 	if req.Content == "" {
-		http.Error(w, "Content is required", http.StatusBadRequest)
+		http.Error(w, `{"error": "content is required"}`, http.StatusBadRequest)
 		return
 	}
 
@@ -83,45 +131,121 @@ func HandleIngestStrand(w http.ResponseWriter, r *http.Request) {
 		req.Source = "manual" // Default source
 	}
 
-	// Create a new strand
+	// Create a new strand with basic information
 	strand := &models.Strand{
-		ID:        uuid.New().String(),
-		UserID:    userID,
-		Content:   req.Content,
-		Source:    req.Source,
-		Tags:      req.Tags,
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
+		ID:           uuid.New().String(),
+		UserID:       userID,
+		Content:      req.Content,
+		Source:       req.Source,
+		Tags:         req.Tags,
+		CreatedAt:    time.Now(),
+		UpdatedAt:    time.Now(),
+		SyncedWithAI: false, // Always start as not synced
 	}
 
-	// Enrich with AI if no tags provided
+	// Generate a basic summary regardless of AI availability
+	strand.Summary = generateBasicSummary(req.Content)
+
+	// If user didn't provide tags, add source as a tag
 	if len(req.Tags) == 0 {
-		tags, summary, err := tagService.ExtractTagsFromContent(r.Context(), req.Content, req.Source)
-		if err != nil {
-			log.Printf("Error extracting tags: %v", err)
+		// Only add source as a tag if it's not already "manual"
+		if req.Source != "manual" {
+			strand.Tags = []string{strings.ToLower(req.Source)}
 		} else {
-			strand.Tags = tags
-			strand.Summary = summary
+			strand.Tags = []string{}
 		}
 	} else {
-		// If user provided tags, still get a summary
-		_, summary, err := tagService.ExtractTagsFromContent(r.Context(), req.Content, req.Source)
-		if err != nil {
-			log.Printf("Error generating summary: %v", err)
-		} else {
-			strand.Summary = summary
+		// Normalize user-provided tags (lowercase)
+		for i, tag := range strand.Tags {
+			strand.Tags[i] = strings.ToLower(strings.TrimSpace(tag))
 		}
+
+		// Remove duplicates
+		strand.Tags = removeDuplicateTags(strand.Tags)
 	}
 
 	// Save the strand
 	savedStrand, err := models.SaveStrand(r.Context(), strand)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Printf("HandleCreateStrand: error saving strand: %v", err)
+		response := StrandResponse{
+			Error: "Failed to save strand: " + err.Error(),
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(response)
 		return
 	}
 
+	// Try to enrich with AI in the background if available
+	// This doesn't block the response to the user
+	if tagService != nil {
+		// Create a new background context that won't be canceled when the request ends
+		bgCtx := context.Background()
+
+		// Use a separate goroutine with panic recovery to prevent crashes
+		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("RECOVERED from panic in enrichStrandWithAI: %v", r)
+				}
+			}()
+			enrichStrandWithAI(bgCtx, savedStrand)
+		}()
+	}
+
+	// Return the saved strand immediately
+	response := StrandResponse{
+		Strand: savedStrand,
+	}
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		log.Printf("HandleCreateStrand: error encoding response: %v", err)
+		http.Error(w, `{"error": "failed to encode response"}`, http.StatusInternalServerError)
+	}
+}
+
+// enrichStrandWithAI processes a strand with AI in the background
+// This is called asynchronously to avoid blocking the user response
+func enrichStrandWithAI(ctx context.Context, strand *models.Strand) {
+	if tagService == nil {
+		return
+	}
+
+	// Extract tags and summary
+	tags, summary, err := tagService.ExtractTagsFromContent(ctx, strand.Content, strand.Source)
+	if err != nil {
+		log.Printf("Error enriching strand %s with AI: %v", strand.ID, err)
+		return
+	}
+
+	// Ensure all tags are lowercase
+	for i, tag := range tags {
+		tags[i] = strings.ToLower(strings.TrimSpace(tag))
+	}
+
+	// Remove any "manual" tag from AI-generated tags to avoid duplication
+	filteredTags := []string{}
+	for _, tag := range tags {
+		if tag != "manual" {
+			filteredTags = append(filteredTags, tag)
+		}
+	}
+
+	// Merge with any user-provided tags
+	if len(strand.Tags) > 0 {
+		strand.Tags = tagService.MergeTags(strand.Tags, filteredTags)
+	} else {
+		strand.Tags = filteredTags
+	}
+
+	// Final deduplication and cleanup
+	strand.Tags = removeDuplicateTags(strand.Tags)
+
+	strand.Summary = summary
+	strand.SyncedWithAI = true
+	strand.UpdatedAt = time.Now()
+
 	// Find related strands
-	related, err := tagService.FindRelatedStrands(r.Context(), savedStrand, 5)
+	related, err := tagService.FindRelatedStrands(ctx, strand, 5)
 	if err != nil {
 		log.Printf("Error finding related strands: %v", err)
 	} else if len(related) > 0 {
@@ -130,20 +254,17 @@ func HandleIngestStrand(w http.ResponseWriter, r *http.Request) {
 		for _, s := range related {
 			relatedIDs = append(relatedIDs, s.ID)
 		}
-		savedStrand.RelatedIDs = relatedIDs
-		savedStrand, err = models.SaveStrand(r.Context(), savedStrand)
-		if err != nil {
-			log.Printf("Error updating related strands: %v", err)
-		}
+		strand.RelatedIDs = relatedIDs
 	}
 
-	// Return the saved strand
-	response := StrandResponse{
-		Strand: savedStrand,
+	// Save the enriched strand
+	_, err = models.SaveStrand(ctx, strand)
+	if err != nil {
+		log.Printf("Error saving AI-enriched strand %s: %v", strand.ID, err)
+		return
 	}
-	if err := json.NewEncoder(w).Encode(response); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-	}
+
+	log.Printf("Successfully enriched strand %s with AI", strand.ID)
 }
 
 // HandleGetStrands handles GET /strands
@@ -245,8 +366,15 @@ func HandleGetStrand(w http.ResponseWriter, r *http.Request, id string) {
 
 // HandleUpdateStrand handles PUT /strands/:id
 func HandleUpdateStrand(w http.ResponseWriter, r *http.Request, id string) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("HandleUpdateStrand: recovered from panic: %v", r)
+			http.Error(w, `{"error": "internal server error due to panic"}`, http.StatusInternalServerError)
+		}
+	}()
+
 	if r.Method != http.MethodPut {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		http.Error(w, `{"error": "method not allowed"}`, http.StatusMethodNotAllowed)
 		return
 	}
 
@@ -255,60 +383,100 @@ func HandleUpdateStrand(w http.ResponseWriter, r *http.Request, id string) {
 	// Get user ID from context (set by auth middleware)
 	userID, _ := r.Context().Value("user_id").(string)
 	if userID == "" {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		http.Error(w, `{"error": "unauthorized"}`, http.StatusUnauthorized)
 		return
 	}
 
+	// Create a timeout context to prevent hanging operations
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+
 	// Get the existing strand
-	strand, err := models.GetStrand(r.Context(), id)
+	strand, err := models.GetStrand(ctx, id)
 	if err != nil {
-		http.Error(w, "Strand not found", http.StatusNotFound)
+		log.Printf("HandleUpdateStrand: error getting strand %s: %v", id, err)
+		http.Error(w, `{"error": "strand not found"}`, http.StatusNotFound)
 		return
 	}
 
 	// Verify ownership
 	if strand.UserID != userID {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		http.Error(w, `{"error": "unauthorized"}`, http.StatusUnauthorized)
 		return
 	}
 
 	// Parse request body
 	var req StrandRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		log.Printf("HandleUpdateStrand: error decoding request body: %v", err)
+		http.Error(w, `{"error": "invalid request body"}`, http.StatusBadRequest)
 		return
 	}
 
-	// Update fields
-	if req.Content != "" {
-		strand.Content = req.Content
+	// Track if content changed to determine if we need AI reprocessing
+	contentChanged := false
 
-		// Re-analyze content if it changed
-		tags, summary, err := tagService.ExtractTagsFromContent(r.Context(), req.Content, strand.Source)
-		if err != nil {
-			log.Printf("Error extracting tags: %v", err)
+	// Update fields
+	if req.Content != "" && req.Content != strand.Content {
+		strand.Content = req.Content
+		contentChanged = true
+
+		// Always update the basic summary immediately
+		strand.Summary = generateBasicSummary(req.Content)
+	}
+
+	// Update tags if provided
+	if len(req.Tags) > 0 {
+		if tagService != nil {
+			// Use tag service to normalize tags
+			strand.Tags = tagService.MergeTags([]string{}, req.Tags)
 		} else {
-			// If user provided tags, merge them with AI tags
-			if len(req.Tags) > 0 {
-				strand.Tags = tagService.MergeTags(req.Tags, tags)
-			} else {
-				strand.Tags = tags
+			// Normalize tags manually
+			normalizedTags := []string{}
+			for _, tag := range req.Tags {
+				// Convert to lowercase and trim spaces
+				tag = strings.ToLower(strings.TrimSpace(tag))
+				if tag != "" && !contains(normalizedTags, tag) {
+					normalizedTags = append(normalizedTags, tag)
+				}
 			}
-			strand.Summary = summary
+			strand.Tags = normalizedTags
 		}
-	} else if len(req.Tags) > 0 {
-		// If only tags were updated
-		// Use MergeTags with an empty slice to normalize the tags
-		strand.Tags = tagService.MergeTags([]string{}, req.Tags)
+	}
+
+	// Mark for AI reprocessing if content changed
+	if contentChanged {
+		strand.SyncedWithAI = false
 	}
 
 	strand.UpdatedAt = time.Now()
 
 	// Save the updated strand
-	updatedStrand, err := models.SaveStrand(r.Context(), strand)
+	updatedStrand, err := models.SaveStrand(ctx, strand)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Printf("HandleUpdateStrand: error saving strand %s: %v", id, err)
+		response := StrandResponse{
+			Error: "Failed to save strand: " + err.Error(),
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(response)
 		return
+	}
+
+	// Try to enrich with AI in the background if content changed
+	if contentChanged && tagService != nil {
+		// Create a new background context that won't be canceled when the request ends
+		bgCtx := context.Background()
+
+		// Use a separate goroutine with panic recovery to prevent crashes
+		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("RECOVERED from panic in enrichStrandWithAI during update: %v", r)
+				}
+			}()
+			enrichStrandWithAI(bgCtx, updatedStrand)
+		}()
 	}
 
 	// Return the updated strand
@@ -316,7 +484,8 @@ func HandleUpdateStrand(w http.ResponseWriter, r *http.Request, id string) {
 		Strand: updatedStrand,
 	}
 	if err := json.NewEncoder(w).Encode(response); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Printf("HandleUpdateStrand: error encoding response: %v", err)
+		http.Error(w, `{"error": "failed to encode response"}`, http.StatusInternalServerError)
 	}
 }
 
@@ -387,4 +556,107 @@ func HandleGetTags(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
+}
+
+// HandleSyncStrandsWithAI handles POST /strands/sync
+func HandleSyncStrandsWithAI(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+
+	// Get user ID from context (set by auth middleware)
+	userID, _ := r.Context().Value("user_id").(string)
+	if userID == "" {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	// Check if AI service is available
+	if tagService == nil {
+		response := StrandResponse{
+			Error: "AI service is not currently available. Please check your AI service configuration.",
+		}
+		w.WriteHeader(http.StatusServiceUnavailable)
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+		return
+	}
+
+	// Get all strands for the user (both synced and unsynced)
+	strands, err := models.GetStrandsByUser(r.Context(), userID, nil, 1, 1000) // Get up to 1000 strands
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Count how many strands were synced
+	syncedCount := 0
+
+	// Sync each strand with AI (including already synced ones for manual sync)
+	for i := range strands {
+		// For manual sync, we sync all strands regardless of previous sync status
+		// This allows users to get updated AI analysis with more context over time
+
+		// Mark as unsynced to force re-processing
+		strands[i].SyncedWithAI = false
+
+		// Use the same enrichment function we use for new strands
+		enrichStrandWithAI(r.Context(), &strands[i])
+		syncedCount++
+	}
+
+	// Return sync results
+	response := StrandResponse{
+		Count: syncedCount,
+	}
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+// generateBasicSummary creates a simple summary when AI service is unavailable
+func generateBasicSummary(content string) string {
+	if len(content) > 150 {
+		return content[:147] + "..."
+	}
+	return content
+}
+
+// Helper function to check if a slice contains a string
+func contains(slice []string, item string) bool {
+	for _, s := range slice {
+		if s == item {
+			return true
+		}
+	}
+	return false
+}
+
+// Helper function to remove duplicate tags
+func removeDuplicateTags(tags []string) []string {
+	// Create a map to track seen tags
+	seen := make(map[string]bool)
+	result := []string{}
+
+	// Add only unseen tags to the result
+	for _, tag := range tags {
+		// Skip empty tags
+		if tag == "" {
+			continue
+		}
+
+		// Convert to lowercase
+		tag = strings.ToLower(strings.TrimSpace(tag))
+
+		if !seen[tag] {
+			seen[tag] = true
+			result = append(result, tag)
+		}
+	}
+
+	return result
 }

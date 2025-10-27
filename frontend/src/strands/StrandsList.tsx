@@ -97,8 +97,7 @@ const StrandsList: React.FC<StrandsListProps> = ({
 
       {loading ? (
         <div className="text-center py-8">
-          <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-blue-600 border-r-transparent"></div>
-          <p className="mt-2 text-gray-600">Loading strands...</p>
+          <p className="text-gray-500">Fetching strands...</p>
         </div>
       ) : error ? (
         <div className="bg-red-50 border-l-4 border-red-400 p-4 mb-4">
@@ -112,7 +111,9 @@ const StrandsList: React.FC<StrandsListProps> = ({
         </div>
       ) : filteredStrands.length === 0 ? (
         <div className="text-center py-12 bg-gray-50 rounded-lg">
-          <p className="text-gray-500 mb-4">No strands found</p>
+          <p className="text-gray-500 mb-4">
+            No strands yet. Reload to refresh!
+          </p>
           {selectedTags.length > 0 && (
             <p className="text-sm text-gray-400">
               Try removing some filters or create a new strand

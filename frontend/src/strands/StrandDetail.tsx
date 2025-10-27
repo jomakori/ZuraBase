@@ -253,9 +253,9 @@ const StrandDetail: React.FC<StrandDetailProps> = ({
           {isEditing ? (
             <div>
               <div className="flex flex-wrap gap-2 mb-4">
-                {editedTags.map((tag) => (
+                {editedTags.map((tag, index) => (
                   <TagChip
-                    key={tag}
+                    key={`${tag}-${index}`}
                     tag={tag}
                     removable
                     onRemove={handleRemoveTag}
@@ -283,7 +283,9 @@ const StrandDetail: React.FC<StrandDetailProps> = ({
           ) : (
             <div className="flex flex-wrap gap-2">
               {strand.tags.length > 0 ? (
-                strand.tags.map((tag) => <TagChip key={tag} tag={tag} />)
+                strand.tags.map((tag, index) => (
+                  <TagChip key={`${tag}-${index}`} tag={tag} />
+                ))
               ) : (
                 <p className="text-gray-500 italic">No tags</p>
               )}

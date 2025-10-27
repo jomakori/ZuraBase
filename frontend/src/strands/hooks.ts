@@ -32,8 +32,10 @@ export const useStrands = (params?: StrandQueryParams) => {
       }
     };
 
+    // run once on mount
     fetchStrands();
-  }, [params]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return { strands, loading, error, count };
 };
@@ -61,13 +63,52 @@ export const useStrand = (id: string) => {
         setStrand(response.strand || null);
         setError(null);
       } catch (err) {
+        console.error(`Error fetching strand ${id}:`, err);
         setError(err instanceof Error ? err : new Error(String(err)));
+
+        // Add retry logic with exponential backoff
+        const retryFetch = (retryCount = 0, maxRetries = 3) => {
+          if (retryCount >= maxRetries) {
+            console.error(
+              `Max retries (${maxRetries}) reached for strand ${id}`
+            );
+            return;
+          }
+
+          const delay = Math.pow(2, retryCount) * 1000; // Exponential backoff: 1s, 2s, 4s
+          console.log(
+            `Retrying fetch for strand ${id} in ${delay}ms (attempt ${
+              retryCount + 1
+            }/${maxRetries})`
+          );
+
+          setTimeout(async () => {
+            try {
+              const retryResponse = await StrandsApi.getStrand(id);
+              setStrand(retryResponse.strand || null);
+              setError(null);
+              setLoading(false);
+            } catch (retryErr) {
+              console.error(
+                `Retry ${retryCount + 1} failed for strand ${id}:`,
+                retryErr
+              );
+              retryFetch(retryCount + 1, maxRetries);
+            }
+          }, delay);
+        };
+
+        // Start retry process
+        retryFetch();
       } finally {
         setLoading(false);
       }
     };
 
-    fetchStrand();
+    // Only fetch if we have a valid ID
+    if (id) {
+      fetchStrand();
+    }
   }, [id]);
 
   return { strand, loading, error };
@@ -83,15 +124,30 @@ export const useCreateStrand = () => {
   const [createdStrand, setCreatedStrand] = useState<Strand | null>(null);
 
   const createStrand = useCallback(async (strandRequest: StrandRequest) => {
+    setLoading(true);
+    setError(null);
     try {
-      setLoading(true);
       const response = await StrandsApi.createStrand(strandRequest);
       setCreatedStrand(response.strand || null);
-      setError(null);
+
+      // Provide feedback about AI sync status
+      const strand = response.strand;
+      if (strand && !strand.synced_with_ai) {
+        console.info("Strand created successfully but pending AI enrichment");
+      }
+
       return response;
     } catch (err) {
-      setError(err instanceof Error ? err : new Error(String(err)));
-      throw err;
+      const normalizedError =
+        err instanceof Error ? err : new Error(String(err));
+      console.error("Strand creation failed:", normalizedError);
+      setError(normalizedError);
+
+      // More informative error message
+      alert(
+        "Your strand was not saved. Please try again or contact support if the problem persists."
+      );
+      return Promise.reject(normalizedError);
     } finally {
       setLoading(false);
     }
@@ -108,6 +164,8 @@ export const useUpdateStrand = () => {
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<Error | null>(null);
   const [updatedStrand, setUpdatedStrand] = useState<Strand | null>(null);
+  const [retryCount, setRetryCount] = useState<number>(0);
+  const maxRetries = 3;
 
   const updateStrand = useCallback(
     async (id: string, strandRequest: StrandRequest) => {
@@ -116,15 +174,81 @@ export const useUpdateStrand = () => {
         const response = await StrandsApi.updateStrand(id, strandRequest);
         setUpdatedStrand(response.strand || null);
         setError(null);
+        setRetryCount(0); // Reset retry count on success
         return response;
       } catch (err) {
-        setError(err instanceof Error ? err : new Error(String(err)));
-        throw err;
+        const normalizedError =
+          err instanceof Error ? err : new Error(String(err));
+        console.error(`Error updating strand ${id}:`, normalizedError);
+        setError(normalizedError);
+
+        // Check if it's a network error or connection refused
+        const isNetworkError =
+          normalizedError.message.includes("Failed to fetch") ||
+          normalizedError.message.includes("net::ERR_CONNECTION_REFUSED");
+
+        // If we have network errors and haven't exceeded max retries
+        if (isNetworkError && retryCount < maxRetries) {
+          const nextRetryCount = retryCount + 1;
+          setRetryCount(nextRetryCount);
+
+          const delay = Math.pow(2, retryCount) * 1000; // Exponential backoff
+          console.log(
+            `Network error detected. Retrying in ${delay}ms (attempt ${nextRetryCount}/${maxRetries})`
+          );
+
+          // Return a promise that will resolve after the retry
+          return new Promise((resolve, reject) => {
+            setTimeout(async () => {
+              try {
+                // Try to verify if the strand was actually saved despite the error
+                const verifyResponse = await StrandsApi.getStrand(id);
+                if (verifyResponse.strand) {
+                  // If the strand exists and has updated content, consider it a success
+                  const savedStrand = verifyResponse.strand;
+                  if (savedStrand.content === strandRequest.content) {
+                    console.log(
+                      `Strand ${id} was actually saved successfully despite network error`
+                    );
+                    setUpdatedStrand(savedStrand);
+                    setError(null);
+                    resolve({ strand: savedStrand });
+                    return;
+                  }
+                }
+
+                // If verification failed or content doesn't match, retry the update
+                const retryResponse = await StrandsApi.updateStrand(
+                  id,
+                  strandRequest
+                );
+                setUpdatedStrand(retryResponse.strand || null);
+                setError(null);
+                resolve(retryResponse);
+              } catch (retryErr) {
+                console.error(`Retry ${nextRetryCount} failed:`, retryErr);
+                if (nextRetryCount >= maxRetries) {
+                  reject(retryErr);
+                } else {
+                  // Let the user know something is happening but don't reject yet
+                  console.log("Still trying to save your changes...");
+                }
+              } finally {
+                setLoading(false);
+              }
+            }, delay);
+          });
+        }
+
+        // If it's not a network error or we've exceeded retries, propagate the error
+        throw normalizedError;
       } finally {
-        setLoading(false);
+        if (retryCount >= maxRetries || !error) {
+          setLoading(false);
+        }
       }
     },
-    []
+    [retryCount, error]
   );
 
   return { updateStrand, loading, error, updatedStrand };
