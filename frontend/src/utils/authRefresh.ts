@@ -35,7 +35,6 @@ export async function handleAuthError(status: number): Promise<boolean> {
     return false;
   }
 
-  // Prevent multiple redirects
   if (isRefreshingAuth) {
     return true;
   }
@@ -43,35 +42,42 @@ export async function handleAuthError(status: number): Promise<boolean> {
   isRefreshingAuth = true;
 
   try {
-    // Double-check if session is actually invalid
-    const isSessionValid = await checkAuthSession();
+    console.warn("Session expired — preventing redirect loop");
 
-    if (!isSessionValid) {
-      console.warn("Session has expired, redirecting to login page");
-      // Show a message to the user
+    // Instead of redirecting immediately, just clear tokens and show UI feedback
+    localStorage.removeItem("auth_token");
+    sessionStorage.clear();
+
+    const existingMessage = document.getElementById("session-expired-warning");
+    if (!existingMessage) {
       const message = document.createElement("div");
+      message.id = "session-expired-warning";
       message.style.position = "fixed";
       message.style.top = "20px";
       message.style.left = "50%";
       message.style.transform = "translateX(-50%)";
       message.style.padding = "10px 20px";
-      message.style.backgroundColor = "#f8d7da";
-      message.style.color = "#721c24";
+      message.style.backgroundColor = "#fff3cd";
+      message.style.color = "#856404";
+      message.style.border = "1px solid #ffeeba";
       message.style.borderRadius = "4px";
       message.style.zIndex = "9999";
       message.textContent =
-        "Your session has expired. Redirecting to login page...";
+        "Your session has expired. Please log in again to continue.";
       document.body.appendChild(message);
-
-      // Give the user a chance to see what's happening
-      setTimeout(() => {
-        window.location.href = "/";
-      }, 2000);
-
-      return true;
     }
+
+    // Graceful delay; reload only once
+    setTimeout(() => {
+      // Redirect to home page instead of non-existent login page
+      if (window.location.pathname !== "/") {
+        window.location.href = "/";
+      }
+    }, 4000);
+
+    return true;
   } catch (error) {
-    console.error("Error handling auth refresh:", error);
+    console.error("Error handling session expiration:", error);
   } finally {
     isRefreshingAuth = false;
   }

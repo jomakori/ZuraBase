@@ -4,10 +4,12 @@ import StrandCard from "./components/StrandCard";
 import TagFilter from "./TagFilter";
 import { Strand } from "./types";
 import { Plus, MagnifyingGlass } from "@phosphor-icons/react";
+import { StrandsApi } from "./api";
 
 interface StrandsListProps {
   onStrandSelect?: (strand: Strand) => void;
   onCreateStrand?: () => void;
+  onStrandSync?: (strand: Strand) => void;
 }
 
 /**
@@ -16,6 +18,7 @@ interface StrandsListProps {
 const StrandsList: React.FC<StrandsListProps> = ({
   onStrandSelect,
   onCreateStrand,
+  onStrandSync,
 }) => {
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
@@ -53,6 +56,27 @@ const StrandsList: React.FC<StrandsListProps> = ({
   const handleCreateClick = () => {
     if (onCreateStrand) {
       onCreateStrand();
+    }
+  };
+
+  const handleStrandSync = async (strand: Strand) => {
+    if (onStrandSync) {
+      onStrandSync(strand);
+    } else {
+      // Fallback: trigger sync by updating the strand
+      try {
+        // Mark strand as unsynced to trigger AI processing
+        await StrandsApi.updateStrand(strand.id, {
+          content: strand.content,
+          source: strand.source,
+          tags: strand.tags,
+        });
+        // Refresh the list to show updated sync status
+        window.location.reload();
+      } catch (error) {
+        console.error("Failed to sync strand:", error);
+        alert("Failed to sync strand with AI. Please try again.");
+      }
     }
   };
 
@@ -128,7 +152,11 @@ const StrandsList: React.FC<StrandsListProps> = ({
               onClick={() => onStrandSelect && onStrandSelect(strand)}
               className="cursor-pointer"
             >
-              <StrandCard strand={strand} onTagClick={handleTagClick} />
+              <StrandCard
+                strand={strand}
+                onTagClick={handleTagClick}
+                onSync={handleStrandSync}
+              />
             </div>
           ))}
         </div>

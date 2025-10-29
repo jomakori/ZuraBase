@@ -235,24 +235,51 @@ func GetAllTags(ctx context.Context, userID string) ([]string, error) {
 
 // GetUnsyncedStrands retrieves all strands that haven't been synced with AI
 func GetUnsyncedStrands(ctx context.Context) ([]Strand, error) {
-	filter := bson.M{"synced_with_ai": false}
+  filter := bson.M{"synced_with_ai": false}
 
-	cursor, err := strandCollection.Find(ctx, filter)
-	if err != nil {
-		return nil, err
-	}
-	defer cursor.Close(ctx)
+  cursor, err := strandCollection.Find(ctx, filter)
+  if err != nil {
+    return nil, err
+  }
+  defer cursor.Close(ctx)
 
-	var strands []Strand
-	for cursor.Next(ctx) {
-		var strand Strand
-		if err := cursor.Decode(&strand); err != nil {
-			return nil, err
-		}
-		strands = append(strands, strand)
-	}
-	if err := cursor.Err(); err != nil {
-		return nil, err
-	}
-	return strands, nil
+  var strands []Strand
+  for cursor.Next(ctx) {
+    var strand Strand
+    if err := cursor.Decode(&strand); err != nil {
+      return nil, err
+    }
+    strands = append(strands, strand)
+  }
+  if err := cursor.Err(); err != nil {
+    return nil, err
+  }
+  return strands, nil
+}
+
+// GetUnsyncedStrandsByUser retrieves all unsynced strands for a specific user
+func GetUnsyncedStrandsByUser(ctx context.Context, userID string) ([]Strand, error) {
+  filter := bson.M{
+    "user_id": userID,
+    "synced_with_ai": false,
+  }
+
+  cursor, err := strandCollection.Find(ctx, filter)
+  if err != nil {
+    return nil, err
+  }
+  defer cursor.Close(ctx)
+
+  var strands []Strand
+  for cursor.Next(ctx) {
+    var strand Strand
+    if err := cursor.Decode(&strand); err != nil {
+      return nil, err
+    }
+    strands = append(strands, strand)
+  }
+  if err := cursor.Err(); err != nil {
+    return nil, err
+  }
+  return strands, nil
 }

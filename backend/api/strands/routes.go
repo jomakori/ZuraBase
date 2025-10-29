@@ -15,12 +15,16 @@ func HandleStrandsRequest(w http.ResponseWriter, r *http.Request) {
 	// Handle different routes
 	switch {
 	case path == "/strands/sync":
-		HandleSyncStrandsWithAI(w, r)
-		return
+	  HandleSyncStrandsWithAI(w, r)
+	  return
+
+	case path == "/strands/sync-unsynced":
+	  HandleSyncUnsyncedStrandsWithAI(w, r)
+	  return
 
 	case path == "/strands/tags":
-		HandleGetTags(w, r)
-		return
+	  HandleGetTags(w, r)
+	  return
 
 	case path == "/strands":
 		if r.Method == http.MethodPost {

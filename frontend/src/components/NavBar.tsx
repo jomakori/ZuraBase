@@ -3,7 +3,7 @@ import { NotePencil, ListChecks, House, Sparkle } from "@phosphor-icons/react";
 import { Link } from "react-router-dom";
 
 interface NavBarProps {
-  currentPage: "home" | "notes" | "planner" | "strands";
+  currentPage: "home" | "notes" | "planner" | "strands" | "settings";
   isAuthenticated?: boolean;
 }
 

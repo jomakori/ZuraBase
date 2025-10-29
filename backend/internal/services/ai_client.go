@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"os"
 	"time"
+
+	"zurabase/models"
 )
 
 // AIClient provides methods to interact with an OpenAPI-compatible AI service
@@ -17,6 +19,8 @@ type AIClient struct {
 	BaseURL    string
 	APIKey     string
 	HTTPClient *http.Client
+	UserID     string // User ID for retrieving LLM profiles
+	ProfileID  string // Currently active LLM profile ID
 }
 
 // AIAnalysisRequest represents the request to analyze content
@@ -37,7 +41,45 @@ type AIAnalysisResponse struct {
 }
 
 // NewAIClient creates a new AI client with the provided configuration
+// It will try to use the default LLM profile if available, otherwise fall back to environment variables
 func NewAIClient() (*AIClient, error) {
+	return NewAIClientWithUserID("")
+}
+
+// NewAIClientWithUserID creates a new AI client for a specific user
+// It will try to use the user's default LLM profile if available
+func NewAIClientWithUserID(userID string) (*AIClient, error) {
+	// Create the HTTP client
+	httpClient := &http.Client{
+		Timeout: 30 * time.Second,
+	}
+
+	// Initialize with empty values
+	client := &AIClient{
+		HTTPClient: httpClient,
+		UserID:     userID,
+	}
+
+	// If we have a user ID, try to get their default LLM profile
+	if userID != "" {
+		profile, err := models.GetDefaultLLMProfile(context.Background(), userID)
+		if err == nil && profile != nil {
+			// Use the profile configuration
+			client.BaseURL = profile.ServerURL
+			client.APIKey = profile.APIKey
+			client.ProfileID = profile.ID
+
+			// If the profile has an empty server URL, use the default
+			if client.BaseURL == "" {
+				client.BaseURL = os.Getenv("AI_SERVICE_URL")
+			}
+
+			log.Printf("Using LLM profile '%s' for user %s", profile.Name, userID)
+			return client, nil
+		}
+	}
+
+	// Fall back to environment variables if no profile is found or there's an error
 	baseURL := os.Getenv("AI_SERVICE_URL")
 	apiKey := os.Getenv("AI_SERVICE_API_KEY")
 
@@ -49,13 +91,69 @@ func NewAIClient() (*AIClient, error) {
 		return nil, errors.New("AI_SERVICE_API_KEY environment variable is not set")
 	}
 
-	return &AIClient{
-		BaseURL: baseURL,
-		APIKey:  apiKey,
-		HTTPClient: &http.Client{
-			Timeout: 30 * time.Second,
-		},
-	}, nil
+	client.BaseURL = baseURL
+	client.APIKey = apiKey
+
+	return client, nil
+}
+
+// UseProfile updates the client to use a specific LLM profile
+func (c *AIClient) UseProfile(ctx context.Context, profileID string) error {
+	if c.UserID == "" {
+		return errors.New("client has no associated user ID")
+	}
+
+	profile, err := models.GetLLMProfile(ctx, profileID)
+	if err != nil {
+		return fmt.Errorf("failed to get LLM profile: %w", err)
+	}
+
+	// Verify ownership
+	if profile.UserID != c.UserID {
+		return errors.New("profile does not belong to the current user")
+	}
+
+	// Update client configuration
+	c.BaseURL = profile.ServerURL
+	c.APIKey = profile.APIKey
+	c.ProfileID = profile.ID
+
+	// If the profile has an empty server URL, use the default
+	if c.BaseURL == "" {
+		c.BaseURL = os.Getenv("AI_SERVICE_URL")
+	}
+
+	log.Printf("Switched to LLM profile '%s'", profile.Name)
+	return nil
+}
+
+// UseDefaultProfile updates the client to use the default LLM profile for the current user
+func (c *AIClient) UseDefaultProfile(ctx context.Context) error {
+	if c.UserID == "" {
+		return errors.New("client has no associated user ID")
+	}
+
+	profile, err := models.GetDefaultLLMProfile(ctx, c.UserID)
+	if err != nil {
+		return fmt.Errorf("failed to get default LLM profile: %w", err)
+	}
+
+	if profile == nil {
+		return errors.New("no default LLM profile found")
+	}
+
+	// Update client configuration
+	c.BaseURL = profile.ServerURL
+	c.APIKey = profile.APIKey
+	c.ProfileID = profile.ID
+
+	// If the profile has an empty server URL, use the default
+	if c.BaseURL == "" {
+		c.BaseURL = os.Getenv("AI_SERVICE_URL")
+	}
+
+	log.Printf("Using default LLM profile '%s'", profile.Name)
+	return nil
 }
 
 // AnalyzeContent sends content to the AI service for analysis

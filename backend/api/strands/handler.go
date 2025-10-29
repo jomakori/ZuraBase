@@ -3,6 +3,7 @@ package strands
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -23,6 +24,7 @@ var (
 // Initialize sets up the services needed for the strands package
 func Initialize() error {
 	var err error
+	// Initialize with empty user ID for global operations
 	aiClient, err = services.NewAIClient()
 	if err != nil {
 		log.Printf("Warning: AI client initialization failed: %v. Using mock implementation.", err)
@@ -35,6 +37,25 @@ func Initialize() error {
 
 	tagService = services.NewTagService(aiClient)
 	return nil
+}
+
+// getAIClientForUser creates or updates an AI client for a specific user
+// This allows using user-specific LLM profiles
+func getAIClientForUser(ctx context.Context, userID string) (*services.AIClient, error) {
+	// If we don't have a global AI client, we can't create a user-specific one
+	if aiClient == nil {
+		return nil, fmt.Errorf("global AI client not initialized")
+	}
+
+	// Create a new AI client with the user ID
+	userAIClient, err := services.NewAIClientWithUserID(userID)
+	if err != nil {
+		log.Printf("Warning: Failed to create user-specific AI client for user %s: %v", userID, err)
+		// Fall back to the global client
+		return aiClient, nil
+	}
+
+	return userAIClient, nil
 }
 
 // autoSyncUnsyncedStrands automatically syncs strands that haven't been synced with AI
@@ -210,8 +231,30 @@ func enrichStrandWithAI(ctx context.Context, strand *models.Strand) {
 		return
 	}
 
+	// Try to get a user-specific AI client
+	userAIClient, err := getAIClientForUser(ctx, strand.UserID)
+	if err != nil {
+		log.Printf("Warning: Using global AI client for strand %s: %v", strand.ID, err)
+		// Continue with the global tag service
+	} else {
+		// Create a temporary tag service with the user-specific AI client
+		userTagService := services.NewTagService(userAIClient)
+		if userTagService != nil {
+			// Use the user-specific tag service
+			log.Printf("Using user-specific LLM profile for strand %s", strand.ID)
+			enrichStrandWithUserAI(ctx, strand, userTagService)
+			return
+		}
+	}
+
+	// Fall back to global tag service if user-specific one fails
+	enrichStrandWithUserAI(ctx, strand, tagService)
+}
+
+// enrichStrandWithUserAI is a helper function that uses a specific tag service to enrich a strand
+func enrichStrandWithUserAI(ctx context.Context, strand *models.Strand, ts *services.TagService) {
 	// Extract tags and summary
-	tags, summary, err := tagService.ExtractTagsFromContent(ctx, strand.Content, strand.Source)
+	tags, summary, err := ts.ExtractTagsFromContent(ctx, strand.Content, strand.Source)
 	if err != nil {
 		log.Printf("Error enriching strand %s with AI: %v", strand.ID, err)
 		return
@@ -586,6 +629,21 @@ func HandleSyncStrandsWithAI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Try to get a user-specific AI client
+	userAIClient, err := getAIClientForUser(r.Context(), userID)
+	if err != nil {
+		log.Printf("Warning: Using global AI client for sync operation: %v", err)
+		// Continue with the global tag service
+	} else {
+		// Create a temporary tag service with the user-specific AI client
+		userTagService := services.NewTagService(userAIClient)
+		if userTagService != nil {
+			// Use the user-specific tag service for the sync operation
+			log.Printf("Using user-specific LLM profile for sync operation")
+			tagService = userTagService
+		}
+	}
+
 	// Get all strands for the user (both synced and unsynced)
 	strands, err := models.GetStrandsByUser(r.Context(), userID, nil, 1, 1000) // Get up to 1000 strands
 	if err != nil {
@@ -659,4 +717,76 @@ func removeDuplicateTags(tags []string) []string {
 	}
 
 	return result
+}
+
+// HandleSyncUnsyncedStrandsWithAI handles POST /strands/sync-unsynced
+func HandleSyncUnsyncedStrandsWithAI(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+
+	// Get user ID from context (set by auth middleware)
+	userID, _ := r.Context().Value("user_id").(string)
+	if userID == "" {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	// Check if AI service is available
+	if tagService == nil {
+		response := StrandResponse{
+			Error: "AI service is not currently available. Please check your AI service configuration.",
+		}
+		w.WriteHeader(http.StatusServiceUnavailable)
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+		return
+	}
+
+	// Try to get a user-specific AI client
+	userAIClient, err := getAIClientForUser(r.Context(), userID)
+	if err != nil {
+		log.Printf("Warning: Using global AI client for sync operation: %v", err)
+		// Continue with the global tag service
+	} else {
+		// Create a temporary tag service with the user-specific AI client
+		userTagService := services.NewTagService(userAIClient)
+		if userTagService != nil {
+			// Use the user-specific tag service for the sync operation
+			log.Printf("Using user-specific LLM profile for sync operation")
+			tagService = userTagService
+		}
+	}
+
+	// Get only unsynced strands for the user using optimized query
+	unsyncedStrands, err := models.GetUnsyncedStrandsByUser(r.Context(), userID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Count how many strands were synced
+	syncedCount := 0
+
+	// Sync only unsynced strands with AI
+	for i := range unsyncedStrands {
+		// Mark as unsynced to force re-processing (though they should already be unsynced)
+		unsyncedStrands[i].SyncedWithAI = false
+
+		// Use the same enrichment function we use for new strands
+		enrichStrandWithAI(r.Context(), &unsyncedStrands[i])
+		syncedCount++
+	}
+
+	// Return sync results
+	response := StrandResponse{
+		Count: syncedCount,
+	}
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
 }
