@@ -38,7 +38,7 @@ test_fe: clean_compose conditional_down
 #   └──────────────────────────────────────────────────────────────────────────┘
 clean_compose:
 	@if [ -e docker-compose.yml ]; then \
-		echo "Removing existing docker-compose.yml"; \
+		echo "Removing old docker-compose template"; \
 		rm -f docker-compose.yml; \
 	fi
 conditional_down:

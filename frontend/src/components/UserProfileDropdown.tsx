@@ -1,9 +1,11 @@
 import React, { useState } from "react";
-import { CaretDown, SignOut } from "@phosphor-icons/react";
+import { CaretDown, SignOut, Gear } from "@phosphor-icons/react";
 import { useAuth } from "../auth/AuthContext";
+import { useNavigate } from "react-router-dom";
 
 const UserProfileDropdown: React.FC = () => {
   const { user, logout } = useAuth();
+  const navigate = useNavigate();
   const [open, setOpen] = useState(false);
 
   if (!user) return null;
@@ -31,6 +33,15 @@ const UserProfileDropdown: React.FC = () => {
             <p className="text-sm font-medium text-gray-900">{user.name}</p>
             <p className="text-xs text-gray-500 truncate">{user.email}</p>
           </div>
+          <button
+            onClick={() => {
+              setOpen(false);
+              navigate("/settings");
+            }}
+            className="flex items-center w-full px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+          >
+            <Gear size={16} className="mr-2" /> Settings
+          </button>
           <button
             onClick={logout}
             className="flex items-center w-full px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"

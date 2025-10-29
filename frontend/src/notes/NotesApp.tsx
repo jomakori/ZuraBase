@@ -1,5 +1,4 @@
 import { useEffect, useState, useRef, useCallback } from "react";
-import NavBar from "../components/NavBar";
 import { MilkdownProvider } from "@milkdown/react";
 import { FloppyDisk, Image } from "@phosphor-icons/react";
 import { getNote, saveNote } from "./api";
@@ -190,7 +189,6 @@ After saving the document you will get a link that you can share.
 
   return (
     <div className="min-h-full">
-      <NavBar currentPage="notes" />
       <div
         className={` pb-32 ${coverImage ? "" : "border-b-2 border-dashed"}`}
         style={{

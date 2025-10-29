@@ -66,4 +66,18 @@ body {
   animation: saveSuccessFlash 0.5s ease-in-out;
 }
 
+/* Animation for loading spinner */
+@keyframes spin-slow {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-spin-slow {
+  animation: spin-slow 2s linear infinite;
+}
+
 /* purgecss end ignore */

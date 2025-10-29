@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -12,7 +11,10 @@ import (
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 
+	"zurabase/api/llm_profiles"
+	"zurabase/api/strands"
 	"zurabase/auth"
+	"zurabase/models"
 	"zurabase/notes"
 	"zurabase/pexels"
 	"zurabase/planner"
@@ -37,29 +39,21 @@ func HealthCheck(ctx context.Context) (*HealthCheckResponse, error) {
 // CORS middleware adds the necessary CORS headers to allow cross-origin requests
 func CORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Get allowed origin from UI_ENDPOINT environment variable
-		allowedOrigin := os.Getenv("UI_ENDPOINT")
-		// If empty, log an error but continue with empty value (which will block all CORS)
-		if allowedOrigin == "" {
-			log.Printf("[CORS] ERROR: UI_ENDPOINT environment variable is not set. CORS will not work properly.")
+		origin := r.Header.Get("Origin")
+		if origin == "" {
+			origin = "*"
 		}
-		
-		// Log CORS settings without exposing full details
-		fmt.Printf("[CORS] CORS configured for API\n")
-		
-		// Set CORS headers
-		w.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
+		w.Header().Set("Access-Control-Allow-Origin", origin)
+		w.Header().Set("Vary", "Origin")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
 
-		// Handle preflight requests
 		if r.Method == "OPTIONS" {
-			w.WriteHeader(http.StatusOK)
+			w.WriteHeader(http.StatusNoContent)
 			return
 		}
 
-		// Call the next handler
 		next.ServeHTTP(w, r)
 	})
 }
@@ -85,12 +79,38 @@ func main() {
 	notes.Initialize(mongoClient, "zurabase")
 	planner.Initialize(mongoClient, "zurabase")
 	auth.Initialize(mongoClient, "zurabase")
+	models.Initialize(mongoClient, "zurabase")
+
+	// Initialize LLM profiles
+	if err := models.InitializeLLMProfiles(mongoClient, "zurabase"); err != nil {
+		log.Printf("Warning: LLM profiles initialization error: %v", err)
+	} else {
+		log.Println("✅ LLM profiles initialized successfully")
+	}
+
+	// ✅ Ensure models (i.e., strands collection) are initialized before strands module uses them
+	log.Println("✅ MongoDB models initialized successfully")
+
+	// Initialize strands module (AI + Tag Service)
+	if err := strands.Initialize(); err != nil {
+		log.Printf("Warning: Strands initialization error: %v", err)
+	} else {
+		log.Println("✅ Strands module initialized successfully")
+	}
+
+	// Initialize persistent WhatsApp connection
+	ctx := context.Background()
+	if err := strands.InitializeWhatsApp(ctx); err != nil {
+		log.Printf("Warning: WhatsApp initialization failed: %v", err)
+	} else {
+		log.Println("✅ WhatsApp integration initialized successfully")
+	}
 
 	if err := planner.InitializeTemplates(context.Background()); err != nil {
 		log.Fatalf("Failed to initialize planner templates: %v", err)
 	}
 	mux := http.NewServeMux()
-	
+
 	// Register health check route
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		ctx := context.Background()
@@ -108,7 +128,7 @@ func main() {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
 	})
-	
+
 	// generic helper to mount all routes (DRY)
 	type route struct {
 		path    string
@@ -122,15 +142,15 @@ func main() {
 	}
 
 	// --- Grouped routes ---
-	// Register notes routes, all protected by AuthMiddleware
-	mux.Handle("/api/note", auth.AuthMiddleware(http.HandlerFunc(notes.HandleNoteRequest)))
-	mux.Handle("/note", auth.AuthMiddleware(http.HandlerFunc(notes.HandleNoteRequest)))
+	// Register notes routes with OptionalAuthMiddleware to allow access while logged out
+	mux.Handle("/api/note", auth.OptionalAuthMiddleware(http.HandlerFunc(notes.HandleNoteRequest)))
+	mux.Handle("/note", auth.OptionalAuthMiddleware(http.HandlerFunc(notes.HandleNoteRequest)))
 
-	mux.Handle("/api/note/", auth.AuthMiddleware(http.HandlerFunc(notes.HandleNoteRequest)))
-	mux.Handle("/note/", auth.AuthMiddleware(http.HandlerFunc(notes.HandleNoteRequest)))
+	mux.Handle("/api/note/", auth.OptionalAuthMiddleware(http.HandlerFunc(notes.HandleNoteRequest)))
+	mux.Handle("/note/", auth.OptionalAuthMiddleware(http.HandlerFunc(notes.HandleNoteRequest)))
 
-	mux.Handle("/api/notes", auth.AuthMiddleware(http.HandlerFunc(notes.HandleListNotes)))
-	mux.Handle("/notes", auth.AuthMiddleware(http.HandlerFunc(notes.HandleListNotes)))
+	mux.Handle("/api/notes", auth.OptionalAuthMiddleware(http.HandlerFunc(notes.HandleListNotes)))
+	mux.Handle("/notes", auth.OptionalAuthMiddleware(http.HandlerFunc(notes.HandleListNotes)))
 
 	plannerRoutes := []route{
 		{"/planner/list", planner.HandleListPlanners},
@@ -244,11 +264,121 @@ func main() {
 
 	// --- Register all grouped routes ---
 	// mountRoutes(mux, notesRoutes) // Removed, now explicitly registered above
-	mountRoutes(mux, plannerRoutes)
+
+	// Wrap planner routes with OptionalAuthMiddleware
+	plannerMux := http.NewServeMux()
+	mountRoutes(plannerMux, plannerRoutes)
+	mux.Handle("/planner", auth.OptionalAuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		plannerMux.ServeHTTP(w, r)
+	})))
+	mux.Handle("/planner/", auth.OptionalAuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		plannerMux.ServeHTTP(w, r)
+	})))
+	mux.Handle("/api/planner", auth.OptionalAuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		plannerMux.ServeHTTP(w, r)
+	})))
+	mux.Handle("/api/planner/", auth.OptionalAuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		plannerMux.ServeHTTP(w, r)
+	})))
+
 	mountRoutes(mux, imageRoutes)
 	mountRoutes(mux, authRoutes)
 
-	
+	// Register strands routes - using direct registration instead of mountRoutes
+	// because we need to use auth middleware which returns http.Handler not http.HandlerFunc
+	mux.Handle("/strands", auth.AuthMiddleware(http.HandlerFunc(strands.HandleStrandsRequest)))
+	mux.Handle("/api/strands", auth.AuthMiddleware(http.HandlerFunc(strands.HandleStrandsRequest)))
+
+	mux.Handle("/strands/", auth.AuthMiddleware(http.HandlerFunc(strands.HandleStrandsRequest)))
+	mux.Handle("/api/strands/", auth.AuthMiddleware(http.HandlerFunc(strands.HandleStrandsRequest)))
+
+	// Register LLM profiles routes with authentication (both /api and non-api versions)
+	llmProfilesHandler := auth.AuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			llm_profiles.HandleGetLLMProfiles(w, r)
+		case http.MethodPost:
+			llm_profiles.HandleCreateLLMProfile(w, r)
+		default:
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	}))
+
+	mux.Handle("/api/llm-profiles", llmProfilesHandler)
+	mux.Handle("/llm-profiles", llmProfilesHandler)
+
+	llmProfilesWithIDHandler := auth.AuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Extract the ID from the URL
+		path := r.URL.Path
+		prefix := "/api/llm-profiles/"
+		if !strings.HasPrefix(path, prefix) {
+			prefix = "/llm-profiles/"
+		}
+
+		// Remove prefix and get the remaining path
+		remaining := strings.TrimPrefix(path, prefix)
+		parts := strings.Split(remaining, "/")
+
+		// Check if we have enough parts
+		if len(parts) < 1 || parts[0] == "" {
+			http.Error(w, "Invalid URL", http.StatusBadRequest)
+			return
+		}
+
+		id := parts[0]
+
+		// Check if this is a set-default request
+		if len(parts) >= 2 && parts[1] == "set-default" {
+			if r.Method != http.MethodPut {
+				http.Error(w, "Method not allowed for set-default operation", http.StatusMethodNotAllowed)
+				return
+			}
+			llm_profiles.HandleSetDefaultLLMProfile(w, r, id)
+			return
+		}
+
+		// Check if this is a test-stored-connection request
+		if len(parts) >= 2 && parts[1] == "test-stored-connection" {
+			if r.Method != http.MethodPost {
+				http.Error(w, "Method not allowed for test-stored-connection operation", http.StatusMethodNotAllowed)
+				return
+			}
+			llm_profiles.HandleTestStoredLLMConnection(w, r, id)
+			return
+		}
+
+		// Handle regular CRUD operations
+		switch r.Method {
+		case http.MethodGet:
+			llm_profiles.HandleGetLLMProfile(w, r, id)
+		case http.MethodPut:
+			llm_profiles.HandleUpdateLLMProfile(w, r, id)
+		case http.MethodDelete:
+			llm_profiles.HandleDeleteLLMProfile(w, r, id)
+		default:
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	}))
+
+	mux.Handle("/api/llm-profiles/", llmProfilesWithIDHandler)
+	mux.Handle("/llm-profiles/", llmProfilesWithIDHandler)
+
+	testConnectionHandler := auth.AuthMiddleware(http.HandlerFunc(llm_profiles.HandleTestLLMConnection))
+	mux.Handle("/api/llm-profiles/test-connection", testConnectionHandler)
+	mux.Handle("/llm-profiles/test-connection", testConnectionHandler)
+
+	// Add models endpoint
+	modelsHandler := auth.AuthMiddleware(http.HandlerFunc(llm_profiles.HandleListAvailableModels))
+	mux.Handle("/api/llm-profiles/models", modelsHandler)
+	mux.Handle("/llm-profiles/models", modelsHandler)
+
+	// We'll modify the existing llmProfilesWithIDHandler to handle test-stored-connection
+	// instead of creating new handlers that conflict with existing ones
+
+	// WhatsApp webhook doesn't require authentication
+	mux.HandleFunc("/strands/whatsapp", strands.HandleWhatsAppWebhook)
+	mux.HandleFunc("/api/strands/whatsapp", strands.HandleWhatsAppWebhook)
+
 	// Register authentication routes
 
 	// Wrap existing mux with optional authentication middleware
@@ -256,7 +386,7 @@ func main() {
 
 	// Create handler chain with CORS middleware
 	handler := CORS(protectedMux)
-	
+
 	log.Println("Starting server on :8080")
 	if err := http.ListenAndServe(":8080", handler); err != nil {
 		log.Fatalf("Server failed: %s", err)
