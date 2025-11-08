@@ -12,17 +12,22 @@ export function getApiBase(): string {
   // If we're in the browser, replace localhost with the actual hostname
   // This handles the case where the frontend is running in a container
   // but the browser is accessing it from outside
+  let endpoint = apiEndpoint as string;
   if (
     typeof window !== "undefined" &&
     window.location.hostname !== "localhost" &&
-    apiEndpoint.includes("localhost")
+    endpoint.includes("localhost")
   ) {
-    const newEndpoint = apiEndpoint.replace(
+    endpoint = endpoint.replace(
       "localhost",
       window.location.hostname
     );
-    return newEndpoint;
   }
 
-  return apiEndpoint as string;
+  // Ensure the endpoint includes /api prefix for all API calls
+  if (!endpoint.endsWith('/api')) {
+    endpoint = endpoint.endsWith('/') ? `${endpoint}api` : `${endpoint}/api`;
+  }
+
+  return endpoint;
 }

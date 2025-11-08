@@ -62,9 +62,83 @@ The backend uses MongoDB to store notes and planner data, with a comprehensive A
 ### Strands
 - **Content Capture**: Save and organize pieces of information as "strands"
 - **AI Enrichment**: Automatic tagging and summarization of content using AI
+- **Per-Strand Sync**: Manually trigger AI enrichment for individual strands
+- **Sync History**: Track all sync operations with timestamps, summaries, and tags
+- **Version Rollback**: Restore strands to previous sync states
 - **Resilient Saving**: Strands are always saved to the database, even when AI services are unavailable
 - **Asynchronous Processing**: Background processing for AI enrichment without blocking user interactions
 - **Tag Management**: Add, remove, and filter content by tags
+- **Related Content**: Discover connections between strands based on shared tags
+
+### LangGraph & AI Workflow
+
+ZuraBase now integrates **LangGraph-based AI workflows** inspired by the [FreeCodeCamp LangChain/LangGraph guide](https://www.freecodecamp.org/news/how-to-use-langchain-and-langgraph-a-beginners-guide-to-ai-workflows/).
+
+#### 🧠 Key Improvements
+- **Graph-Oriented Orchestration:** replaces linear HTTP AI calls with modular graph workflows
+- **Metadata-Aware Analysis:** user and LLM profile context influence results
+- **Structured Responses:** standardized JSON output schema improves reliability
+- **Observability:** enables step-level tracing and debugging
+- **Hybrid Mode:** backward-compatible fallback to legacy LangChain clients
+
+LangGraph allows multi-node AI pipelines where tasks like summarization, tagging,
+and related content discovery operate as discrete graph nodes with traceable
+connections and structured outputs.
+
+Example architecture:
+```
+┌──────────────────────────────┐
+│     LangGraph Workflow       │
+├──────────────────────────────┤
+│ Prompt Builder  →  Analyzer  │
+│ Context Provider →  Parser   │
+└──────────────────────────────┘
+```
+
+The backend now communicates with a local or remote LangGraph service at
+`http://localhost:8000/api/v1/langgraph/run`, sending structured workflow
+requests with optional trace and telemetry support.
+
+---
+
+## LangGraph Workflow Overview
+
+The ZuraBase backend now uses LangGraph to manage structured AI workflows through JSON graph execution calls.
+
+**Endpoint:** `POST /api/v1/langgraph/run`
+
+**Example Request**
+```json
+{
+  "workflow": "content_analysis_graph",
+  "inputs": {
+    "content": "Example strand content",
+    "source": "manual",
+    "metadata": {
+      "user_id": "123",
+      "profile_id": "p123"
+    }
+  },
+  "options": {
+    "trace": true,
+    "return_schema": true
+  }
+}
+```
+
+**Features**
+- Modular nodes (`PromptBuilder`, `ContextInjector`, `ModelExecutor`, `OutputParser`, `Normalizer`)
+- Resilient node-level error isolation
+- Traceable execution with telemetry
+- Compatible with both LangChain and LangGraph services
+
+**Run locally**
+```bash
+docker run -d -p 8000:8000 langgraph-service:latest
+export LLM_CLIENT_MODE=langchain
+```
+
+---
 
 ## Getting Started
 
@@ -102,6 +176,51 @@ devbox run test_be
 
 ```
 
+## LangGraph Workflow Implementation
+
+ZuraBase leverages the **LangGraph-derived AI workflow layer** to process strand enrichment asynchronously.
+
+**Key Benefits**
+- Modular and reusable graph workflow definitions for AI enrichment tasks.
+- Support for parallel node execution (tag analysis, summarization, relation detection).
+- Compatibility with future LangChain Expression Language (LCEL) upgrades.
+
+**Service Endpoint**
+
+The backend sends structured POST requests to:
+
+```bash
+http://localhost:8000/api/v1/langgraph/run
+```
+
+**Example Workflow Payload**
+```json
+{
+  "workflow": "content_analysis_graph",
+  "inputs": {
+    "content": "Example strand content about open-source",
+    "source": "manual",
+    "metadata": {
+      "user_id": "12345",
+      "profile_id": "p123"
+    }
+  },
+  "options": {
+    "trace": true,
+    "return_schema": true
+  }
+}
+```
+
+The workflow executes a chain:
+```
+PromptBuilder → ContextInjector → ModelExecutor → OutputParser → Normalizer
+```
+
+Each node produces typed outputs validated via schema checking. Telemetry data allows AI interaction visibility.
+
+---
+
 ## API Endpoints
 
 ### Notes API
@@ -136,15 +255,16 @@ devbox run test_be
 
 ### Strands API
 
-| Method | Endpoint        | Description                                      |
-| ------ | --------------- | ------------------------------------------------ |
-| GET    | `/strands`      | Retrieve all strands with optional tag filtering |
-| GET    | `/strands/:id`  | Retrieve a strand by ID                          |
-| POST   | `/strands`      | Create a new strand                              |
-| PUT    | `/strands/:id`  | Update an existing strand                        |
-| DELETE | `/strands/:id`  | Delete a strand                                  |
-| GET    | `/strands/tags` | Get all tags used across strands                 |
-| POST   | `/strands/sync` | Manually trigger AI enrichment for all strands   |
+| Method | Endpoint            | Description                                      |
+| ------ | ------------------- | ------------------------------------------------ |
+| GET    | `/strands`          | Retrieve all strands with optional tag filtering |
+| GET    | `/strands/:id`      | Retrieve a strand by ID                          |
+| POST   | `/strands`          | Create a new strand                              |
+| PUT    | `/strands/:id`      | Update an existing strand                        |
+| DELETE | `/strands/:id`      | Delete a strand                                  |
+| GET    | `/strands/tags`     | Get all tags used across strands                 |
+| POST   | `/strands/:id/sync` | Sync a specific strand with AI                   |
+| POST   | `/strands/sync`     | Manually trigger AI enrichment for all strands   |
 
 ## Contributing
 - **🐛 [Report Issues](https://github.com/jomakori/zurabase/issues)**: Submit bugs found or log feature requests for the `zurabase` project.

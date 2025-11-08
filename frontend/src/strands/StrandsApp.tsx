@@ -4,10 +4,13 @@ import StrandsList from "./StrandsList";
 import StrandDetail from "./StrandDetail";
 import { Strand } from "./types";
 import { useCreateStrand } from "./hooks";
-import { StrandsApi } from "./api";
 import { getApiBase } from "../getApiBase";
-import { useLLMProfiles } from "../utils/llmProfilesHooks";
-import LLMProfileWizard from "./components/LLMProfileWizard";
+import { useLLMProfilesContext } from "../context/LLMProfilesProvider";
+import LLMProfileWizard from "../components/LLMProfileWizard";
+import Dialog from "../components/Dialog";
+import Toast from "../components/Toast";
+import SyncProgressModal from "./components/SyncProgressModal";
+import { syncService, SyncProgress } from "./syncService";
 import { ArrowsClockwise, CaretDown } from "@phosphor-icons/react";
 
 /**
@@ -16,16 +19,34 @@ import { ArrowsClockwise, CaretDown } from "@phosphor-icons/react";
  */
 const StrandsApp: React.FC = () => {
   const { user } = useAuth();
-  const { profiles, loading: profilesLoading } = useLLMProfiles();
+  const { profiles, loading: profilesLoading } = useLLMProfilesContext();
   const [selectedStrandId, setSelectedStrandId] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const { createStrand, loading: creating } = useCreateStrand();
-  const [isSyncing, setIsSyncing] = useState(false);
   const [showLLMWizard, setShowLLMWizard] = useState(false);
   const [hasSeenWizard, setHasSeenWizard] = useState(false);
   const [showSyncDropdown, setShowSyncDropdown] = useState(false);
-  const [showSyncModal, setShowSyncModal] = useState(false);
   const [syncMode, setSyncMode] = useState<"unsynced" | "all">("unsynced");
+
+  // Sync progress state for bulk sync
+  const [showBulkSyncProgress, setShowBulkSyncProgress] = useState(false);
+  const [bulkSyncProgress, setBulkSyncProgress] = useState<SyncProgress>({
+    total: 0,
+    completed: 0,
+    failed: 0,
+    status: "syncing",
+  });
+
+  // Toast notifications
+  const [toast, setToast] = useState<{
+    show: boolean;
+    message: string;
+    variant: "success" | "error" | "info" | "warning";
+  }>({
+    show: false,
+    message: "",
+    variant: "info",
+  });
 
   // Form state - moved to top level to fix React Hooks order violation
   const [content, setContent] = useState("");
@@ -86,87 +107,86 @@ const StrandsApp: React.FC = () => {
       }
     } catch (error) {
       console.error("Failed to create strand:", error);
-      alert(
-        "There was an error saving your strand. Your content has not been lost - please try again."
-      );
+      setToast({
+        show: true,
+        message: "There was an error saving your strand. Please try again.",
+        variant: "error",
+      });
     }
   };
 
   const handleSyncWithAI = async (mode: "unsynced" | "all" = "unsynced") => {
     if (!user) return;
 
-    // Show confirmation modal
+    // Directly initiate sync, progress modal will handle messages
     setSyncMode(mode);
-    setShowSyncModal(true);
     setShowSyncDropdown(false);
+    await initiateBulkSync(mode);
   };
 
-  const confirmSync = async () => {
-    setIsSyncing(true);
-    setShowSyncModal(false);
+  const initiateBulkSync = async (mode: "unsynced" | "all") => {
+    setShowBulkSyncProgress(true);
 
     try {
-      const endpoint =
-        syncMode === "unsynced" ? "/strands/sync-unsynced" : "/strands/sync";
-      const response = await fetch(`${getApiBase()}${endpoint}`, {
-        method: "POST",
+      // Fetch all strands to pass to syncMultiple
+      const allStrandsResponse = await fetch(`${getApiBase()}/strands`, {
+        method: "GET",
         credentials: "include",
         headers: {
           "Content-Type": "application/json",
         },
       });
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(
-          errorData.error || `Failed to sync: ${response.statusText}`
-        );
+      if (!allStrandsResponse.ok) {
+        throw new Error("Failed to fetch strands for bulk sync.");
+      }
+      const allStrandsData = await allStrandsResponse.json();
+      const allStrands: Strand[] = allStrandsData.strands || [];
+
+      const strandsToSync =
+        syncMode === "unsynced"
+          ? allStrands.filter((s) => !s.synced_with_ai)
+          : allStrands;
+
+      if (strandsToSync.length === 0) {
+        setBulkSyncProgress({
+          total: 0,
+          completed: 0,
+          failed: 0,
+          status: "completed",
+          message: "No strands found to sync.",
+          currentOperation: "No action needed",
+        });
+        setTimeout(() => setShowBulkSyncProgress(false), 3000);
+        return;
       }
 
-      const result = await response.json();
-      alert(
-        `Successfully synced ${result.count} strands with AI!${
-          syncMode === "unsynced"
-            ? " Only unsynced strands were processed."
-            : " All strands were re-analyzed with additional context."
-        }`
-      );
-
-      // Refresh the page to show updated sync status
-      window.location.reload();
+      await syncService.syncMultiple(strandsToSync, {
+        onProgress: (progress) => {
+          setBulkSyncProgress(progress);
+        },
+        onComplete: (results) => {
+          // The SyncProgressModal will show the final message
+          setTimeout(() => window.location.reload(), 1500);
+        },
+        onError: (error) => {
+          // Error message is already set in bulkSyncProgress by syncService
+          console.error("Bulk sync operation failed:", error);
+        },
+      });
     } catch (error) {
-      console.error("Failed to sync with AI:", error);
+      console.error("Failed to initiate bulk sync:", error);
       const errorMessage =
         error instanceof Error ? error.message : "Unknown error occurred";
-      alert(`Sync failed: ${errorMessage}`);
-    } finally {
-      setIsSyncing(false);
-    }
-  };
-
-  const handleStrandSync = (strand: Strand) => {
-    // Sync individual strand immediately without confirmation
-    handleSyncIndividualStrand(strand);
-  };
-
-  const handleSyncIndividualStrand = async (strand: Strand) => {
-    try {
-      // Mark strand as unsynced to trigger AI processing
-      await StrandsApi.updateStrand(strand.id, {
-        content: strand.content,
-        source: strand.source,
-        tags: strand.tags,
+      setBulkSyncProgress({
+        total: 0,
+        completed: 0,
+        failed: 1,
+        status: "error",
+        message: `Failed to initiate bulk sync: ${errorMessage}`,
+        currentOperation: "Initialization failed",
       });
-
-      // Show success message in the UI instead of alert
-      console.log("Strand queued for AI processing:", strand.id);
-      // Note: In a production app, you'd want to show a toast notification here
-      // For now, we'll just refresh to show updated status
-      window.location.reload();
-    } catch (error) {
-      console.error("Failed to sync strand:", error);
-      // Show error message in the UI instead of alert
-      console.error("Failed to sync strand with AI. Please try again.");
+      setTimeout(() => setShowBulkSyncProgress(false), 3000);
     }
   };
 
@@ -305,40 +325,32 @@ const StrandsApp: React.FC = () => {
   return (
     <div className="min-h-screen w-full bg-gray-50 flex flex-col">
       {showLLMWizard && (
-        <LLMProfileWizard
-          onComplete={handleLLMWizardComplete}
-          onSkip={handleLLMWizardSkip}
-        />
-      )}
-
-      {/* Sync Confirmation Modal */}
-      {showSyncModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
-            <h3 className="text-lg font-semibold mb-4">Confirm Sync</h3>
-            <p className="text-gray-600 mb-6">
-              {syncMode === "unsynced"
-                ? "This will sync all unsynced strands with AI. Continue?"
-                : "This will re-sync ALL strands with AI, including previously synced ones. This may take longer. Continue?"}
-            </p>
-            <div className="flex justify-end gap-3">
-              <button
-                onClick={() => setShowSyncModal(false)}
-                className="px-4 py-2 text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={confirmSync}
-                disabled={isSyncing}
-                className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
-              >
-                {isSyncing ? "Syncing..." : "Sync"}
-              </button>
-            </div>
-          </div>
+        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full flex justify-center items-center z-50">
+          <LLMProfileWizard
+            onComplete={handleLLMWizardComplete}
+            onSkip={handleLLMWizardSkip}
+            showSkipButton={true}
+            autoDefaultFirst={true}
+          />
         </div>
       )}
+
+      {/* Bulk Sync Progress Modal */}
+      <SyncProgressModal
+        isOpen={showBulkSyncProgress}
+        progress={bulkSyncProgress}
+        onClose={() => setShowBulkSyncProgress(false)}
+        canCancel={true} // Allow cancellation for bulk sync
+        onCancel={() => syncService.cancel()}
+      />
+
+      {/* Toast Notifications */}
+      <Toast
+        isOpen={toast.show}
+        message={toast.message}
+        variant={toast.variant}
+        onClose={() => setToast({ ...toast, show: false })}
+      />
 
       <header className="h-16 bg-white border-b border-gray-200 flex items-center justify-between px-8 shadow-sm">
         <h1 className="text-xl font-semibold text-gray-800">Strands Library</h1>
@@ -353,14 +365,10 @@ const StrandsApp: React.FC = () => {
           <div className="relative">
             <button
               onClick={() => setShowSyncDropdown(!showSyncDropdown)}
-              disabled={isSyncing}
-              className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white text-sm font-medium rounded-md hover:bg-green-700 disabled:opacity-50"
+              className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white text-sm font-medium rounded-md hover:bg-green-700"
             >
-              <ArrowsClockwise
-                size={16}
-                className={isSyncing ? "animate-spin" : ""}
-              />
-              {isSyncing ? "Syncing..." : "Sync"}
+              <ArrowsClockwise size={16} />
+              Sync All
               <CaretDown size={12} />
             </button>
 
@@ -416,7 +424,13 @@ const StrandsApp: React.FC = () => {
             <ImportIntegrationsSection
               isLinked={false}
               whatsappName=""
-              onLogin={() => alert("Simulating WhatsApp OAuth...")}
+              onLogin={() => {
+                setToast({
+                  show: true,
+                  message: "WhatsApp OAuth integration coming soon!",
+                  variant: "info",
+                });
+              }}
             />
           </section>
 
@@ -428,7 +442,6 @@ const StrandsApp: React.FC = () => {
             <StrandsList
               onStrandSelect={handleStrandSelect}
               onCreateStrand={handleCreateClick}
-              onStrandSync={handleStrandSync}
             />
           )}
         </main>

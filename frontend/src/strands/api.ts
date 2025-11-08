@@ -4,13 +4,18 @@ import {
   StrandRequest,
   StrandResponse,
   StrandQueryParams,
+  SyncResponse,
+  SyncLog,
 } from "./types";
-import { handleAuthError, getNetworkErrorMessage } from "../utils/authRefresh";
+import { handleAuthError } from "../utils/authRefresh";
+import { log as logger } from "../utils/clientLogger";
 
 const API_BASE = getApiBase();
+const MODULE = "StrandsApi";
 
 /**
  * API client for the Strands module
+ * Uses centralized logger for consistent logging
  */
 export const StrandsApi = {
   /**
@@ -43,6 +48,7 @@ export const StrandsApi = {
       }
     }
 
+    logger.apiRequest(MODULE, "GET", url);
     const response = await fetch(url, {
       method: "GET",
       credentials: "include",
@@ -52,10 +58,12 @@ export const StrandsApi = {
     });
 
     if (!response.ok) {
+      logger.apiResponse(MODULE, "GET", url, response.status);
       throw new Error(`Failed to fetch strands: ${response.statusText}`);
     }
-
-    return await response.json();
+    const data = await response.json();
+    logger.apiResponse(MODULE, "GET", url, response.status, data);
+    return data;
   },
 
   /**
@@ -65,7 +73,9 @@ export const StrandsApi = {
    */
   async getStrand(id: string): Promise<StrandResponse> {
     try {
-      const response = await fetch(`${API_BASE}/strands/${id}`, {
+      const url = `${API_BASE}/strands/${id}`;
+      logger.apiRequest(MODULE, "GET", url);
+      const response = await fetch(url, {
         method: "GET",
         credentials: "include",
         headers: {
@@ -74,46 +84,41 @@ export const StrandsApi = {
       });
 
       if (!response.ok) {
-        // Handle authentication errors
         if (response.status === 401) {
           await handleAuthError(response.status);
         }
 
         const errorText = await response.text();
+        logger.apiResponse(MODULE, "GET", url, response.status, {
+          error: errorText,
+        });
         throw new Error(
           `Failed to fetch strand: ${response.status} ${
             response.statusText
           } - ${errorText || "No response body"}`
         );
       }
-
-      return await response.json();
+      const data = await response.json();
+      logger.apiResponse(MODULE, "GET", url, response.status, data);
+      return data;
     } catch (err) {
-      console.error(`Error in getStrand(${id}):`, err);
-
-      // Check if it's a network error
       if (err instanceof TypeError && err.message.includes("Failed to fetch")) {
-        console.warn("Network error detected, server might be unavailable");
+        logger.warn(
+          MODULE,
+          "Network error detected, server might be unavailable"
+        );
       } else if (
         err instanceof TypeError &&
         err.message.includes("net::ERR_CONNECTION_REFUSED")
       ) {
-        console.warn(
-          "Connection refused error detected, server might be restarting"
-        );
-        // Wait a moment before propagating the error to allow server to restart
+        logger.warn(MODULE, "Connection refused, server might be restarting");
         await new Promise((resolve) => setTimeout(resolve, 2000));
       }
-
+      logger.apiError(MODULE, "GET", `${API_BASE}/strands/${id}`, err as Error);
       throw err;
     }
   },
 
-  /**
-   * Create a new strand
-   * @param strandRequest The strand data to create
-   * @returns Promise with the created strand response
-   */
   /**
    * Create a new strand
    * The strand will be saved immediately and queued for AI processing if available
@@ -122,7 +127,9 @@ export const StrandsApi = {
    */
   async createStrand(strandRequest: StrandRequest): Promise<StrandResponse> {
     try {
-      const response = await fetch(`${API_BASE}/strands`, {
+      const url = `${API_BASE}/strands`;
+      logger.apiRequest(MODULE, "POST", url, strandRequest);
+      const response = await fetch(url, {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
@@ -131,16 +138,20 @@ export const StrandsApi = {
 
       if (!response.ok) {
         const text = await response.text();
+        logger.apiResponse(MODULE, "POST", url, response.status, {
+          error: text,
+        });
         throw new Error(
           `Failed to create strand: ${response.status} ${
             response.statusText
           } - ${text || "No response body"}`
         );
       }
-
-      return await response.json();
+      const data = await response.json();
+      logger.apiResponse(MODULE, "POST", url, response.status, data);
+      return data;
     } catch (err) {
-      console.error("Error creating strand:", err);
+      logger.apiError(MODULE, "POST", `${API_BASE}/strands`, err as Error);
       throw err;
     }
   },
@@ -156,7 +167,9 @@ export const StrandsApi = {
     strandRequest: StrandRequest
   ): Promise<StrandResponse> {
     try {
-      const response = await fetch(`${API_BASE}/strands/${id}`, {
+      const url = `${API_BASE}/strands/${id}`;
+      logger.apiRequest(MODULE, "PUT", url, strandRequest);
+      const response = await fetch(url, {
         method: "PUT",
         credentials: "include",
         headers: {
@@ -166,32 +179,31 @@ export const StrandsApi = {
       });
 
       if (!response.ok) {
-        // Handle authentication errors
         if (response.status === 401) {
           await handleAuthError(response.status);
         }
 
         const errorText = await response.text();
+        logger.apiResponse(MODULE, "PUT", url, response.status, {
+          error: errorText,
+        });
         throw new Error(
           `Failed to update strand: ${response.status} ${
             response.statusText
           } - ${errorText || "No response body"}`
         );
       }
-
-      return await response.json();
+      const data = await response.json();
+      logger.apiResponse(MODULE, "PUT", url, response.status, data);
+      return data;
     } catch (err) {
-      console.error(`Error in updateStrand(${id}):`, err);
-
-      // Check if it's a network error
       if (err instanceof TypeError && err.message.includes("Failed to fetch")) {
-        console.warn(
-          "Network error detected during strand update, server might be unavailable"
+        logger.warn(
+          MODULE,
+          "Network error during strand update, server might be unavailable"
         );
-        // Show a user-friendly message
-        alert(getNetworkErrorMessage(err));
       }
-
+      logger.apiError(MODULE, "PUT", `${API_BASE}/strands/${id}`, err as Error);
       throw err;
     }
   },
@@ -202,14 +214,18 @@ export const StrandsApi = {
    * @returns Promise that resolves when the strand is deleted
    */
   async deleteStrand(id: string): Promise<void> {
-    const response = await fetch(`${API_BASE}/strands/${id}`, {
+    const url = `${API_BASE}/strands/${id}`;
+    logger.apiRequest(MODULE, "DELETE", url);
+    const response = await fetch(url, {
       method: "DELETE",
       credentials: "include",
     });
 
     if (!response.ok) {
+      logger.apiResponse(MODULE, "DELETE", url, response.status);
       throw new Error(`Failed to delete strand: ${response.statusText}`);
     }
+    logger.apiResponse(MODULE, "DELETE", url, response.status);
   },
 
   /**
@@ -217,7 +233,9 @@ export const StrandsApi = {
    * @returns Promise with the tags response
    */
   async getTags(): Promise<string[]> {
-    const response = await fetch(`${API_BASE}/strands/tags`, {
+    const url = `${API_BASE}/strands/tags`;
+    logger.apiRequest(MODULE, "GET", url);
+    const response = await fetch(url, {
       method: "GET",
       credentials: "include",
       headers: {
@@ -226,10 +244,169 @@ export const StrandsApi = {
     });
 
     if (!response.ok) {
+      logger.apiResponse(MODULE, "GET", url, response.status);
       throw new Error(`Failed to fetch tags: ${response.statusText}`);
     }
 
     const data = await response.json();
+    logger.apiResponse(MODULE, "GET", url, response.status, data);
     return data.tags || [];
+  },
+
+  /**
+   * Sync a single strand with AI
+   * @param id The ID of the strand to sync
+   * @returns Promise with the sync response
+   */
+  async syncStrand(id: string): Promise<SyncResponse> {
+    try {
+      const url = `${API_BASE}/strands/${id}/sync`;
+      logger.apiRequest(MODULE, "POST", url);
+      const response = await fetch(url, {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+        },
+      });
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          await handleAuthError(response.status);
+        }
+
+        const errorText = await response.text();
+        logger.apiResponse(MODULE, "POST", url, response.status, {
+          error: errorText,
+        });
+        throw new Error(
+          `Failed to sync strand: ${response.status} ${response.statusText} - ${
+            errorText || "No response body"
+          }`
+        );
+      }
+      const data = await response.json();
+      logger.apiResponse(MODULE, "POST", url, response.status, data);
+      return data;
+    } catch (err) {
+      if (err instanceof TypeError && err.message.includes("Failed to fetch")) {
+        logger.warn(
+          MODULE,
+          "Network error during strand sync, server might be unavailable"
+        );
+      }
+      logger.apiError(
+        MODULE,
+        "POST",
+        `${API_BASE}/strands/${id}/sync`,
+        err as Error
+      );
+      throw err;
+    }
+  },
+
+  /**
+   * Get sync history for a strand
+   * @param strandId The ID of the strand
+   * @returns Promise with the sync history
+   */
+  async getStrandHistory(
+    strandId: string
+  ): Promise<{ sync_history: SyncLog[] }> {
+    try {
+      const url = `${API_BASE}/strands/${strandId}/sync-history`;
+      logger.apiRequest(MODULE, "GET", url);
+      const response = await fetch(url, {
+        method: "GET",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+        },
+      });
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          await handleAuthError(response.status);
+        }
+
+        const errorText = await response.text();
+        logger.apiResponse(MODULE, "GET", url, response.status, {
+          error: errorText,
+        });
+        throw new Error(
+          `Failed to fetch sync history: ${response.status} ${
+            response.statusText
+          } - ${errorText || "No response body"}`
+        );
+      }
+      const data = await response.json();
+      logger.apiResponse(MODULE, "GET", url, response.status, data);
+      return data;
+    } catch (err) {
+      logger.apiError(
+        MODULE,
+        "GET",
+        `${API_BASE}/strands/${strandId}/sync-history`,
+        err as Error
+      );
+      throw err;
+    }
+  },
+
+  /**
+   * Rollback a strand to a previous sync version
+   * @param strandId The ID of the strand
+   * @param timestamp The timestamp of the sync log to rollback to
+   * @returns Promise with the updated strand response
+   */
+  async rollbackStrand(
+    strandId: string,
+    timestamp: string
+  ): Promise<StrandResponse> {
+    try {
+      const url = `${API_BASE}/strands/${strandId}/rollback`;
+      logger.apiRequest(MODULE, "POST", url, { timestamp });
+      const response = await fetch(url, {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ timestamp }),
+      });
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          await handleAuthError(response.status);
+        }
+
+        const errorText = await response.text();
+        logger.apiResponse(MODULE, "POST", url, response.status, {
+          error: errorText,
+        });
+        throw new Error(
+          `Failed to rollback strand: ${response.status} ${
+            response.statusText
+          } - ${errorText || "No response body"}`
+        );
+      }
+      const data = await response.json();
+      logger.apiResponse(MODULE, "POST", url, response.status, data);
+      return data;
+    } catch (err) {
+      if (err instanceof TypeError && err.message.includes("Failed to fetch")) {
+        logger.warn(
+          MODULE,
+          "Network error during rollback, server might be unavailable"
+        );
+      }
+      logger.apiError(
+        MODULE,
+        "POST",
+        `${API_BASE}/strands/${strandId}/rollback`,
+        err as Error
+      );
+      throw err;
+    }
   },
 };

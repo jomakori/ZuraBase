@@ -1,5 +1,6 @@
 import { getApiBase } from "../getApiBase";
 import { handleAuthError } from "./authRefresh";
+import { log } from "./clientLogger";
 
 export interface LLMProfile {
   id: string;
@@ -18,6 +19,7 @@ export interface LLMProfileRequest {
   api_key: string;
   model: string;
   is_default: boolean;
+  service?: string;
 }
 
 export interface LLMProfileResponse {
@@ -60,7 +62,10 @@ export const LLMProfilesApi = {
       if (!response.ok) {
         // Handle authentication errors
         if (response.status === 401) {
-          await handleAuthError(response.status);
+          const handled = await handleAuthError(response.status);
+          if (handled) {
+            throw new Error("Authentication required - please log in again");
+          }
         }
 
         const errorText = await response.text();
@@ -73,7 +78,7 @@ export const LLMProfilesApi = {
 
       return await response.json();
     } catch (err) {
-      console.error("Error fetching LLM profiles:", err);
+      log.error("Error fetching LLM profiles:", err);
       throw err;
     }
   },
@@ -96,7 +101,10 @@ export const LLMProfilesApi = {
       if (!response.ok) {
         // Handle authentication errors
         if (response.status === 401) {
-          await handleAuthError(response.status);
+          const handled = await handleAuthError(response.status);
+          if (handled) {
+            throw new Error("Authentication required - please log in again");
+          }
         }
 
         const errorText = await response.text();
@@ -109,7 +117,7 @@ export const LLMProfilesApi = {
 
       return await response.json();
     } catch (err) {
-      console.error(`Error fetching LLM profile ${id}:`, err);
+      log.error(`Error fetching LLM profile ${id}:`, err);
       throw err;
     }
   },
@@ -135,7 +143,10 @@ export const LLMProfilesApi = {
       if (!response.ok) {
         // Handle authentication errors
         if (response.status === 401) {
-          await handleAuthError(response.status);
+          const handled = await handleAuthError(response.status);
+          if (handled) {
+            throw new Error("Authentication required - please log in again");
+          }
         }
 
         const errorText = await response.text();
@@ -148,7 +159,7 @@ export const LLMProfilesApi = {
 
       return await response.json();
     } catch (err) {
-      console.error("Error creating LLM profile:", err);
+      log.error("Error creating LLM profile:", err);
       throw err;
     }
   },
@@ -176,7 +187,10 @@ export const LLMProfilesApi = {
       if (!response.ok) {
         // Handle authentication errors
         if (response.status === 401) {
-          await handleAuthError(response.status);
+          const handled = await handleAuthError(response.status);
+          if (handled) {
+            throw new Error("Authentication required - please log in again");
+          }
         }
 
         const errorText = await response.text();
@@ -189,7 +203,7 @@ export const LLMProfilesApi = {
 
       return await response.json();
     } catch (err) {
-      console.error(`Error updating LLM profile ${id}:`, err);
+      log.error(`Error updating LLM profile ${id}:`, err);
       throw err;
     }
   },
@@ -209,7 +223,10 @@ export const LLMProfilesApi = {
       if (!response.ok) {
         // Handle authentication errors
         if (response.status === 401) {
-          await handleAuthError(response.status);
+          const handled = await handleAuthError(response.status);
+          if (handled) {
+            throw new Error("Authentication required - please log in again");
+          }
         }
 
         const errorText = await response.text();
@@ -220,7 +237,7 @@ export const LLMProfilesApi = {
         );
       }
     } catch (err) {
-      console.error(`Error deleting LLM profile ${id}:`, err);
+      log.error(`Error deleting LLM profile ${id}:`, err);
       throw err;
     }
   },
@@ -246,7 +263,10 @@ export const LLMProfilesApi = {
       if (!response.ok) {
         // Handle authentication errors
         if (response.status === 401) {
-          await handleAuthError(response.status);
+          const handled = await handleAuthError(response.status);
+          if (handled) {
+            throw new Error("Authentication required - please log in again");
+          }
         }
 
         const errorText = await response.text();
@@ -259,7 +279,7 @@ export const LLMProfilesApi = {
 
       return await response.json();
     } catch (err) {
-      console.error(`Error setting default LLM profile ${id}:`, err);
+      log.error(`Error setting default LLM profile ${id}:`, err);
       throw err;
     }
   },
@@ -285,7 +305,10 @@ export const LLMProfilesApi = {
       if (!response.ok) {
         // Handle authentication errors
         if (response.status === 401) {
-          await handleAuthError(response.status);
+          const handled = await handleAuthError(response.status);
+          if (handled) {
+            throw new Error("Authentication required - please log in again");
+          }
         }
 
         const errorText = await response.text();
@@ -298,19 +321,82 @@ export const LLMProfilesApi = {
 
       return await response.json();
     } catch (err) {
-      console.error("Error testing LLM connection:", err);
+      log.error("Error testing LLM connection:", err);
+      throw err;
+    }
+  },
+
+  /**
+   * Test connection to a stored LLM profile
+   * @param id The ID of the profile to test
+   * @returns Promise with the test response
+   */
+  async testStoredConnection(id: string): Promise<ConnectionTestResponse> {
+    // Validate profile ID
+    if (!id || id.trim() === "") {
+      throw new Error("Profile ID is required for connection test");
+    }
+
+    try {
+      log.debug(`Testing stored connection for profile: ${id}`);
+      const response = await fetch(
+        `${API_BASE}/llm-profiles/${id}/test-stored-connection`,
+        {
+          method: "POST",
+          credentials: "include",
+          headers: {
+            "Content-Type": "application/json",
+          },
+        }
+      );
+
+      if (!response.ok) {
+        // Handle authentication errors
+        if (response.status === 401) {
+          const handled = await handleAuthError(response.status);
+          if (handled) {
+            throw new Error("Authentication required - please log in again");
+          }
+        }
+
+        const errorText = await response.text();
+        throw new Error(
+          `Failed to test stored LLM connection: ${response.status} ${
+            response.statusText
+          } - ${errorText || "No response body"}`
+        );
+      }
+
+      return await response.json();
+    } catch (err) {
+      log.error(`Error testing stored LLM connection for profile ${id}:`, err);
       throw err;
     }
   },
 };
 
 /**
- * Fetch available models from the user's default LLM profile.
+ * Fetch available models from an LLM server using LangChain.
+ * This is for existing profiles that have a default LLM profile.
  */
-export async function getAvailableModels(): Promise<any> {
+export async function getAvailableModels(
+  apiKey?: string,
+  serverURL?: string,
+  service?: string
+): Promise<any> {
   const API_BASE = getApiBase();
   try {
-    const response = await fetch(`${API_BASE}/llm-profiles/models`, {
+    // Always use the backend proxy route to ensure authentication and proper API key handling
+    const queryParams = new URLSearchParams();
+    if (apiKey) queryParams.append("apiKey", apiKey);
+    if (serverURL) queryParams.append("serverURL", serverURL);
+    if (service) queryParams.append("service", service);
+
+    const url = `${API_BASE}/llm-profiles/models?${queryParams.toString()}`;
+
+    log.debug("Fetching models via backend proxy:", url);
+
+    const response = await fetch(url, {
       method: "GET",
       credentials: "include",
       headers: {
@@ -327,7 +413,61 @@ export async function getAvailableModels(): Promise<any> {
 
     return await response.json();
   } catch (error) {
-    console.error("Error fetching available LLM models:", error);
+    log.error("Error fetching available LLM models:", error);
+    throw error;
+  }
+}
+
+/**
+ * Fetch available models directly from LangChain for new profile creation.
+ * This doesn't require an existing default profile.
+ */
+export async function fetchModelsFromLangChain(
+  service: string,
+  apiKey: string,
+  serverURL?: string
+): Promise<any> {
+  try {
+    let baseUrl = "http://localhost:8000";
+    if (serverURL && /^https?:\/\//.test(serverURL)) {
+      baseUrl = serverURL.replace(/\/+$/, "");
+    }
+
+    const url = `${baseUrl}/api/v1/langchain/models?service=${encodeURIComponent(
+      service
+    )}`;
+
+    log.debug("Fetching models from:", url);
+
+    const response = await fetch(url, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(
+        `Failed to fetch models from LangChain: ${response.status} ${response.statusText} - ${errorText}`
+      );
+    }
+
+    const result = await response.json();
+
+    if (!result || (!result.models && !result.data)) {
+      throw new Error(
+        "Response from LangChain did not contain models or data."
+      );
+    }
+
+    return {
+      data: result.models || result.data || [],
+      models: result.models || result.data || [],
+    };
+  } catch (error) {
+    log.error("Error fetching models from LangChain:", error);
     throw error;
   }
 }

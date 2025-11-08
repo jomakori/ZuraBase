@@ -1,0 +1,303 @@
+import React from "react";
+import {
+  ArrowsClockwise,
+  CheckCircle,
+  XCircle,
+  X,
+  Warning,
+} from "@phosphor-icons/react";
+
+export interface AIStep {
+  id: string;
+  label: string;
+  status: "pending" | "active" | "completed" | "error";
+  timestamp: Date;
+  details?: string;
+}
+
+export interface SyncProgress {
+  total: number;
+  completed: number;
+  failed: number;
+  currentItem?: string;
+  status: "syncing" | "completed" | "error" | "cancelled";
+  message?: string;
+  currentOperation?: string;
+  aiSteps?: AIStep[]; // Detailed AI operation steps
+  thinkingMessage?: string; // Current AI thinking/processing message
+}
+
+interface SyncProgressModalProps {
+  isOpen: boolean;
+  progress: SyncProgress;
+  onClose: () => void;
+  onCancel?: () => void;
+  canCancel?: boolean;
+}
+
+/**
+ * Enhanced modal component to display sync progress for multiple strands
+ * with real-time progress indicators and cancellation support
+ */
+const SyncProgressModal: React.FC<SyncProgressModalProps> = ({
+  isOpen,
+  progress,
+  onClose,
+  onCancel,
+  canCancel = true,
+}) => {
+  if (!isOpen) return null;
+
+  const percentage =
+    progress.total > 0
+      ? Math.round((progress.completed / progress.total) * 100)
+      : 0;
+
+  const isComplete = progress.status === "completed";
+  const hasError = progress.status === "error";
+  const isSyncing = progress.status === "syncing";
+  const isCancelled = progress.status === "cancelled";
+
+  const successCount = progress.completed - progress.failed;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 animate-fadeIn">
+      <div className="bg-white rounded-lg shadow-xl max-w-lg w-full mx-4 animate-scaleIn">
+        {/* Header */}
+        <div className="flex items-center justify-between p-6 border-b border-gray-200">
+          <div className="flex items-center gap-3">
+            {isSyncing && (
+              <div className="h-6 w-6 animate-spin rounded-full border-3 border-solid border-blue-600 border-r-transparent"></div>
+            )}
+            {isComplete && (
+              <CheckCircle size={24} className="text-green-600" weight="fill" />
+            )}
+            {hasError && (
+              <XCircle size={24} className="text-red-600" weight="fill" />
+            )}
+            {isCancelled && (
+              <Warning size={24} className="text-yellow-600" weight="fill" />
+            )}
+            <h3 className="text-lg font-semibold text-gray-900">
+              {isSyncing && (progress.currentOperation || "Syncing Strands")}
+              {isComplete && "Sync Complete"}
+              {hasError && "Sync Error"}
+              {isCancelled && "Sync Cancelled"}
+            </h3>
+          </div>
+          {(isComplete || hasError || isCancelled) && (
+            <button
+              onClick={onClose}
+              className="text-gray-400 hover:text-gray-600 transition-colors"
+              aria-label="Close"
+            >
+              <X size={20} />
+            </button>
+          )}
+        </div>
+
+        {/* Content */}
+        <div className="p-6 space-y-4 max-h-[60vh] overflow-y-auto">
+          {/* Progress Bar */}
+          <div>
+            <div className="flex justify-between text-sm text-gray-600 mb-2">
+              <span>
+                {progress.completed} of {progress.total} strands processed
+              </span>
+              <span className="font-medium">{percentage}%</span>
+            </div>
+            <div className="w-full bg-gray-200 rounded-full h-3 overflow-hidden shadow-inner">
+              <div
+                className={`h-full transition-all duration-300 rounded-full ${
+                  hasError
+                    ? "bg-red-500"
+                    : isCancelled
+                    ? "bg-yellow-500"
+                    : isComplete
+                    ? "bg-green-500"
+                    : "bg-blue-600"
+                } ${isSyncing ? "animate-pulse" : ""}`}
+                style={{ width: `${percentage}%` }}
+              />
+            </div>
+          </div>
+
+          {/* Current Item */}
+          {isSyncing && progress.currentItem && (
+            <div className="bg-gray-50 p-3 rounded-md border border-gray-200">
+              <div className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">
+                Current Strand
+              </div>
+              <div className="text-sm text-gray-800 font-medium">
+                {progress.currentItem}
+              </div>
+            </div>
+          )}
+
+          {/* AI Operation Steps - ChatGPT-like thinking display */}
+          {isSyncing && progress.aiSteps && progress.aiSteps.length > 0 && (
+            <div className="space-y-2">
+              <div className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">
+                AI Processing Steps
+              </div>
+              {progress.aiSteps.map((step) => (
+                <div
+                  key={step.id}
+                  className={`flex items-start gap-3 p-3 rounded-md transition-all ${
+                    step.status === "active"
+                      ? "bg-blue-50 border border-blue-200"
+                      : step.status === "completed"
+                      ? "bg-green-50 border border-green-200"
+                      : step.status === "error"
+                      ? "bg-red-50 border border-red-200"
+                      : "bg-gray-50 border border-gray-200"
+                  }`}
+                >
+                  <div className="flex-shrink-0 mt-0.5">
+                    {step.status === "active" && (
+                      <div className="h-4 w-4 animate-spin rounded-full border-2 border-solid border-blue-600 border-r-transparent"></div>
+                    )}
+                    {step.status === "completed" && (
+                      <CheckCircle
+                        size={16}
+                        className="text-green-600"
+                        weight="fill"
+                      />
+                    )}
+                    {step.status === "error" && (
+                      <XCircle
+                        size={16}
+                        className="text-red-600"
+                        weight="fill"
+                      />
+                    )}
+                    {step.status === "pending" && (
+                      <div className="h-4 w-4 rounded-full border-2 border-gray-300"></div>
+                    )}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div
+                      className={`text-sm font-medium ${
+                        step.status === "active"
+                          ? "text-blue-900"
+                          : step.status === "completed"
+                          ? "text-green-900"
+                          : step.status === "error"
+                          ? "text-red-900"
+                          : "text-gray-600"
+                      }`}
+                    >
+                      {step.label}
+                    </div>
+                    {step.details && (
+                      <div className="text-xs text-gray-600 mt-1">
+                        {step.details}
+                      </div>
+                    )}
+                    {step.status === "active" && (
+                      <div className="flex items-center gap-1 mt-1">
+                        <div className="flex gap-1">
+                          <div className="w-1.5 h-1.5 bg-blue-600 rounded-full animate-bounce"></div>
+                          <div
+                            className="w-1.5 h-1.5 bg-blue-600 rounded-full animate-bounce"
+                            style={{ animationDelay: "0.1s" }}
+                          ></div>
+                          <div
+                            className="w-1.5 h-1.5 bg-blue-600 rounded-full animate-bounce"
+                            style={{ animationDelay: "0.2s" }}
+                          ></div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Thinking Message - Similar to ChatGPT's thinking indicator */}
+          {isSyncing && progress.thinkingMessage && (
+            <div className="bg-gradient-to-r from-blue-50 to-indigo-50 p-4 rounded-md border border-blue-200">
+              <div className="flex items-start gap-3">
+                <div className="flex-shrink-0">
+                  <div className="h-5 w-5 animate-spin rounded-full border-2 border-solid border-blue-600 border-r-transparent"></div>
+                </div>
+                <div className="flex-1">
+                  <div className="text-xs font-medium text-blue-900 uppercase tracking-wide mb-1">
+                    AI Thinking
+                  </div>
+                  <div className="text-sm text-blue-800 italic">
+                    {progress.thinkingMessage}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Status Message */}
+          {progress.message && !isSyncing && (
+            <div
+              className={`p-3 rounded-md text-sm ${
+                hasError
+                  ? "bg-red-50 text-red-800 border border-red-200"
+                  : isComplete
+                  ? "bg-green-50 text-green-800 border border-green-200"
+                  : "bg-blue-50 text-blue-800 border border-blue-200"
+              }`}
+            >
+              {progress.message}
+            </div>
+          )}
+
+          {/* Stats */}
+          {(isComplete || hasError || isCancelled) && (
+            <div className="flex gap-4 text-sm">
+              {successCount > 0 && (
+                <div className="flex items-center gap-1">
+                  <CheckCircle
+                    size={16}
+                    className="text-green-600"
+                    weight="fill"
+                  />
+                  <span className="text-gray-600">
+                    {successCount} successful
+                  </span>
+                </div>
+              )}
+              {progress.failed > 0 && (
+                <div className="flex items-center gap-1">
+                  <XCircle size={16} className="text-red-600" weight="fill" />
+                  <span className="text-gray-600">
+                    {progress.failed} failed
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Actions */}
+        <div className="flex justify-end gap-3 p-4 bg-gray-50 rounded-b-lg border-t border-gray-200">
+          {isSyncing && canCancel && onCancel && (
+            <button
+              onClick={onCancel}
+              className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 transition-colors"
+            >
+              Cancel Sync
+            </button>
+          )}
+          {(isComplete || hasError || isCancelled) && (
+            <button
+              onClick={onClose}
+              className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors"
+            >
+              Close
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default SyncProgressModal;

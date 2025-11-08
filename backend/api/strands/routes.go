@@ -14,17 +14,21 @@ func HandleStrandsRequest(w http.ResponseWriter, r *http.Request) {
 
 	// Handle different routes
 	switch {
+	case path == "/strands/client-logs":
+		HandleClientLogs(w, r)
+		return
+
 	case path == "/strands/sync":
-	  HandleSyncStrandsWithAI(w, r)
-	  return
+		HandleSyncStrandsWithAI(w, r)
+		return
 
 	case path == "/strands/sync-unsynced":
-	  HandleSyncUnsyncedStrandsWithAI(w, r)
-	  return
+		HandleSyncUnsyncedStrandsWithAI(w, r)
+		return
 
 	case path == "/strands/tags":
-	  HandleGetTags(w, r)
-	  return
+		HandleGetTags(w, r)
+		return
 
 	case path == "/strands":
 		if r.Method == http.MethodPost {
@@ -42,8 +46,44 @@ func HandleStrandsRequest(w http.ResponseWriter, r *http.Request) {
 		return
 
 	case strings.HasPrefix(path, "/strands/"):
-		// Extract ID from path
-		id := path[len("/strands/"):]
+		// Extract ID and potential sub-path
+		remainder := path[len("/strands/"):]
+
+		// Check if this is a sync request for a specific strand
+		if strings.HasSuffix(remainder, "/sync") {
+			id := strings.TrimSuffix(remainder, "/sync")
+			if r.Method == http.MethodPost {
+				HandleSyncStrand(w, r, id)
+				return
+			}
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		// Check if this is a sync-history request
+		if strings.HasSuffix(remainder, "/sync-history") {
+			id := strings.TrimSuffix(remainder, "/sync-history")
+			if r.Method == http.MethodGet {
+				HandleGetSyncHistory(w, r, id)
+				return
+			}
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		// Check if this is a rollback request
+		if strings.HasSuffix(remainder, "/rollback") {
+			id := strings.TrimSuffix(remainder, "/rollback")
+			if r.Method == http.MethodPost {
+				HandleRollbackStrand(w, r, id)
+				return
+			}
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		// Otherwise, treat as a regular strand ID
+		id := remainder
 
 		// Handle different methods
 		switch r.Method {

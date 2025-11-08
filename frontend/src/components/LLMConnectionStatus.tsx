@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
-import { useLLMProfiles } from "../utils/llmProfilesHooks";
-import { getApiBase } from "../getApiBase";
+import { useLLMProfilesContext } from "../context/LLMProfilesProvider";
+import { LLMProfilesApi } from "../utils/llmProfilesApi";
 
 interface ConnectionStatusProps {
   className?: string;
@@ -12,7 +12,7 @@ interface ConnectionStatusProps {
 const AIConnectionStatus: React.FC<ConnectionStatusProps> = ({
   className = "",
 }) => {
-  const { profiles, loading: profilesLoading } = useLLMProfiles();
+  const { profiles, loading: profilesLoading } = useLLMProfilesContext();
   const [connectionStatus, setConnectionStatus] = useState<
     "connected" | "disconnected" | "checking" | "no-profiles"
   >("checking");
@@ -45,37 +45,24 @@ const AIConnectionStatus: React.FC<ConnectionStatusProps> = ({
       }
 
       // Test the actual LLM connection using the stored profile
-      const response = await fetch(
-        `${getApiBase()}/llm-profiles/${
-          defaultProfile.id
-        }/test-stored-connection`,
-        {
-          method: "POST",
-          credentials: "include",
-          headers: {
-            "Content-Type": "application/json",
-          },
-        }
+      const result = await LLMProfilesApi.testStoredConnection(
+        defaultProfile.id
       );
 
-      if (response.ok) {
-        const result = await response.json();
-        if (result.success) {
-          setConnectionStatus("connected");
-          setStatusMessage(`Connected to ${defaultProfile.name}`);
-        } else {
-          setConnectionStatus("disconnected");
-          setStatusMessage(
-            `Connection failed: ${result.message || "Unknown error"}`
-          );
-        }
+      if (result.success) {
+        setConnectionStatus("connected");
+        setStatusMessage(`Connected to ${defaultProfile.name}`);
       } else {
         setConnectionStatus("disconnected");
-        setStatusMessage("Connection test failed");
+        setStatusMessage(
+          `Connection failed: ${result.message || "Unknown error"}`
+        );
       }
     } catch (error) {
       setConnectionStatus("disconnected");
-      setStatusMessage("Connection test failed");
+      const errorMessage =
+        error instanceof Error ? error.message : "Connection test failed";
+      setStatusMessage(`Connection test failed: ${errorMessage}`);
       console.error("Connection test error:", error);
     }
   };

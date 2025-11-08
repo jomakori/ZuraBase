@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 )
@@ -112,6 +113,38 @@ func TestGetStrand_Success(t *testing.T) {
 	}
 	if len(got.Tags) != len(testStrand.Tags) {
 		t.Errorf("expected %d tags, got %d", len(testStrand.Tags), len(got.Tags))
+	}
+}
+
+// TestDuplicateTagsAreRemoved tests deduplication of tags when saving a strand
+func TestDuplicateTagsAreRemoved(t *testing.T) {
+	ctx := context.Background()
+
+	strand := &Strand{
+		ID:        "test-strand-duplicate-tags",
+		UserID:    "test-user-id",
+		Content:   "https://www.instagram.com/reels/testvideo/",
+		Source:    "manual",
+		Tags:      []string{"manual", "Manual", "maps", "  Maps "}, // intentionally mixed
+		Summary:   "Duplicate tag test strand",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+
+	deleteStrandByID(ctx, t, strand.ID)
+	saved := saveStrand(ctx, t, strand)
+
+	tagCount := len(saved.Tags)
+	tagSet := make(map[string]struct{})
+	for _, tag := range saved.Tags {
+		tagLower := strings.ToLower(tag)
+		if _, exists := tagSet[tagLower]; exists {
+			t.Errorf("duplicate tag found: %s", tag)
+		}
+		tagSet[tagLower] = struct{}{}
+	}
+	if tagCount != len(tagSet) {
+		t.Errorf("expected unique tags but got duplicates: %v", saved.Tags)
 	}
 }
 

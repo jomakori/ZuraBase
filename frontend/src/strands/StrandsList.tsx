@@ -4,12 +4,14 @@ import StrandCard from "./components/StrandCard";
 import TagFilter from "./TagFilter";
 import { Strand } from "./types";
 import { Plus, MagnifyingGlass } from "@phosphor-icons/react";
-import { StrandsApi } from "./api";
+import Dialog from "../components/Dialog";
+import Toast from "../components/Toast";
+import SyncProgressModal from "./components/SyncProgressModal";
+import { syncService, SyncProgress } from "./syncService";
 
 interface StrandsListProps {
   onStrandSelect?: (strand: Strand) => void;
   onCreateStrand?: () => void;
-  onStrandSync?: (strand: Strand) => void;
 }
 
 /**
@@ -18,15 +20,26 @@ interface StrandsListProps {
 const StrandsList: React.FC<StrandsListProps> = ({
   onStrandSelect,
   onCreateStrand,
-  onStrandSync,
 }) => {
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [page, setPage] = useState(1);
-  const { strands, loading, error, count } = useStrands({
+  const { strands, loading, error, count, refetch } = useStrands({
     tags: selectedTags,
     page,
     limit: 10,
+  });
+
+  // Dialog and notification states
+  const [pendingSyncStrand, setPendingSyncStrand] = useState<Strand | null>(
+    null
+  );
+  const [showSyncProgress, setShowSyncProgress] = useState(false);
+  const [syncProgress, setSyncProgress] = useState<SyncProgress>({
+    total: 0,
+    completed: 0,
+    failed: 0,
+    status: "syncing",
   });
 
   // Reset page when filters change
@@ -60,24 +73,39 @@ const StrandsList: React.FC<StrandsListProps> = ({
   };
 
   const handleStrandSync = async (strand: Strand) => {
-    if (onStrandSync) {
-      onStrandSync(strand);
-    } else {
-      // Fallback: trigger sync by updating the strand
-      try {
-        // Mark strand as unsynced to trigger AI processing
-        await StrandsApi.updateStrand(strand.id, {
-          content: strand.content,
-          source: strand.source,
-          tags: strand.tags,
-        });
-        // Refresh the list to show updated sync status
-        window.location.reload();
-      } catch (error) {
-        console.error("Failed to sync strand:", error);
-        alert("Failed to sync strand with AI. Please try again.");
-      }
+    if (!strand) return;
+    setPendingSyncStrand(strand);
+    setShowSyncProgress(true);
+
+    try {
+      await syncService.syncSingle(strand, {
+        onProgress: (progress) => {
+          setSyncProgress(progress);
+        },
+      });
+      // Refetch the list to show updated data
+      setTimeout(() => {
+        refetch();
+      }, 1000);
+    } catch (error) {
+      console.error("Failed to sync strand:", error);
+      // Error message is already set in syncProgress by syncService
+    } finally {
+      setPendingSyncStrand(null);
+      setTimeout(() => {
+        setShowSyncProgress(false);
+      }, 2000);
     }
+  };
+
+  const handleCloseSyncProgress = () => {
+    setShowSyncProgress(false);
+    setSyncProgress({
+      total: 0,
+      completed: 0,
+      failed: 0,
+      status: "syncing",
+    });
   };
 
   // Filter strands by search query (client-side filtering)
@@ -194,6 +222,15 @@ const StrandsList: React.FC<StrandsListProps> = ({
           </nav>
         </div>
       )}
+
+      {/* Sync Progress Modal */}
+      <SyncProgressModal
+        isOpen={showSyncProgress}
+        progress={syncProgress}
+        onClose={handleCloseSyncProgress}
+        canCancel={true}
+        onCancel={() => syncService.cancel()}
+      />
     </div>
   );
 };

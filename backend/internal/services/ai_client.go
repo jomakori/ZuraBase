@@ -8,19 +8,20 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"os"
 	"time"
 
+	"strings"
 	"zurabase/models"
 )
 
-// AIClient provides methods to interact with an OpenAPI-compatible AI service
+// AIClient provides methods to interact with LangChain-based AI services only
 type AIClient struct {
-	BaseURL    string
-	APIKey     string
-	HTTPClient *http.Client
-	UserID     string // User ID for retrieving LLM profiles
-	ProfileID  string // Currently active LLM profile ID
+	ServiceName string
+	Model       string
+	APIKey      string
+	HTTPClient  *http.Client
+	UserID      string
+	ProfileID   string
 }
 
 // AIAnalysisRequest represents the request to analyze content
@@ -49,51 +50,31 @@ func NewAIClient() (*AIClient, error) {
 // NewAIClientWithUserID creates a new AI client for a specific user
 // It will try to use the user's default LLM profile if available
 func NewAIClientWithUserID(userID string) (*AIClient, error) {
-	// Create the HTTP client
-	httpClient := &http.Client{
-		Timeout: 30 * time.Second,
+	httpClient := &http.Client{Timeout: 30 * time.Second}
+	client := &AIClient{HTTPClient: httpClient, UserID: userID}
+
+	if userID == "" {
+		return nil, errors.New("userID is required for user-specific AI clients")
 	}
 
-	// Initialize with empty values
-	client := &AIClient{
-		HTTPClient: httpClient,
-		UserID:     userID,
+	profile, err := models.GetDefaultLLMProfile(context.Background(), userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get LLM profile for user %s: %w", userID, err)
+	}
+	if profile == nil {
+		return nil, fmt.Errorf("no default LLM profile found for user %s", userID)
 	}
 
-	// If we have a user ID, try to get their default LLM profile
-	if userID != "" {
-		profile, err := models.GetDefaultLLMProfile(context.Background(), userID)
-		if err == nil && profile != nil {
-			// Use the profile configuration
-			client.BaseURL = profile.ServerURL
-			client.APIKey = profile.APIKey
-			client.ProfileID = profile.ID
-
-			// If the profile has an empty server URL, use the default
-			if client.BaseURL == "" {
-				client.BaseURL = os.Getenv("AI_SERVICE_URL")
-			}
-
-			log.Printf("Using LLM profile '%s' for user %s", profile.Name, userID)
-			return client, nil
-		}
+	if profile.ServerURL == "" || profile.APIKey == "" {
+		return nil, fmt.Errorf("invalid LLM profile configuration for user %s", userID)
 	}
 
-	// Fall back to environment variables if no profile is found or there's an error
-	baseURL := os.Getenv("AI_SERVICE_URL")
-	apiKey := os.Getenv("AI_SERVICE_API_KEY")
+	client.ServiceName = "LangChain"
+	client.APIKey = profile.APIKey
+	client.Model = profile.Model
+	client.ProfileID = profile.ID
 
-	if baseURL == "" {
-		return nil, errors.New("AI_SERVICE_URL environment variable is not set")
-	}
-
-	if apiKey == "" {
-		return nil, errors.New("AI_SERVICE_API_KEY environment variable is not set")
-	}
-
-	client.BaseURL = baseURL
-	client.APIKey = apiKey
-
+	log.Printf("✅ Using LangChain-based LLM profile '%s' for user %s", profile.Name, userID)
 	return client, nil
 }
 
@@ -114,16 +95,12 @@ func (c *AIClient) UseProfile(ctx context.Context, profileID string) error {
 	}
 
 	// Update client configuration
-	c.BaseURL = profile.ServerURL
+	c.ServiceName = "LangChain"
 	c.APIKey = profile.APIKey
+	c.Model = profile.Model
 	c.ProfileID = profile.ID
 
-	// If the profile has an empty server URL, use the default
-	if c.BaseURL == "" {
-		c.BaseURL = os.Getenv("AI_SERVICE_URL")
-	}
-
-	log.Printf("Switched to LLM profile '%s'", profile.Name)
+	log.Printf("✅ Switched to LangChain LLM profile '%s'", profile.Name)
 	return nil
 }
 
@@ -143,67 +120,89 @@ func (c *AIClient) UseDefaultProfile(ctx context.Context) error {
 	}
 
 	// Update client configuration
-	c.BaseURL = profile.ServerURL
+	c.ServiceName = "LangChain"
 	c.APIKey = profile.APIKey
+	c.Model = profile.Model
 	c.ProfileID = profile.ID
 
-	// If the profile has an empty server URL, use the default
-	if c.BaseURL == "" {
-		c.BaseURL = os.Getenv("AI_SERVICE_URL")
-	}
-
-	log.Printf("Using default LLM profile '%s'", profile.Name)
+	log.Printf("✅ Using default LangChain profile '%s'", profile.Name)
 	return nil
 }
 
-// AnalyzeContent sends content to the AI service for analysis
+// AnalyzeContent now exclusively uses LangChain endpoints
 func (c *AIClient) AnalyzeContent(ctx context.Context, content, source string) (*AIAnalysisResponse, error) {
-	log.Printf("Analyzing content from source: %s", source)
+	log.Printf("🚀 Using LangGraph workflow for AI analysis (model=%s, user=%s)", c.Model, c.UserID)
 
-	reqBody := AIAnalysisRequest{
-		Content: content,
-		Source:  source,
+	if c.APIKey == "" {
+		return nil, fmt.Errorf("missing API key")
 	}
 
-	jsonData, err := json.Marshal(reqBody)
+	payload := map[string]interface{}{
+		"workflow": "content_analysis_graph",
+		"inputs": map[string]interface{}{
+			"content":  content,
+			"source":   source,
+			"user_id":  c.UserID,
+			"model":    c.Model,
+			"profile":  c.ProfileID,
+			"metadata": map[string]interface{}{"service": "LangGraph"},
+		},
+		"options": map[string]interface{}{
+			"trace":          true,
+			"return_schema":  true,
+			"timeout_seconds": 60,
+		},
+	}
+
+	jsonData, err := json.Marshal(payload)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %w", err)
+		return nil, fmt.Errorf("failed to serialize LangGraph workflow payload: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(
-		ctx,
-		"POST",
-		fmt.Sprintf("%s/v1/analyze", c.BaseURL),
-		bytes.NewBuffer(jsonData),
-	)
+	url := "http://localhost:8000/api/v1/langgraph/run"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewBuffer(jsonData))
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+		return nil, fmt.Errorf("failed to create LangGraph request: %w", err)
 	}
 
-	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.APIKey))
+	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to send request: %w", err)
+		return nil, fmt.Errorf("failed LangGraph request: %w", err)
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("AI service returned non-OK status: %d", resp.StatusCode)
+	var body struct {
+		Output struct {
+			Tags       []string `json:"tags"`
+			Summary    string   `json:"summary"`
+			Topics     []string `json:"topics"`
+			Keywords   []string `json:"keywords"`
+			Confidence float64  `json:"confidence"`
+		} `json:"output"`
+		Error string `json:"error,omitempty"`
 	}
 
-	var result AIAnalysisResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return nil, fmt.Errorf("invalid LangGraph response format: %w", err)
 	}
 
-	if result.Error != "" {
-		return nil, fmt.Errorf("AI service returned error: %s", result.Error)
+	if resp.StatusCode != http.StatusOK || body.Error != "" {
+		return nil, fmt.Errorf("LangGraph workflow failed [%d]: %s", resp.StatusCode, body.Error)
 	}
 
-	log.Printf("Content analyzed successfully. Generated %d tags and summary", len(result.Tags))
-	return &result, nil
+	response := &AIAnalysisResponse{
+		Tags:        body.Output.Tags,
+		Summary:     body.Output.Summary,
+		Topics:      body.Output.Topics,
+		Keywords:    body.Output.Keywords,
+		ProcessedAt: time.Now().Format(time.RFC3339),
+	}
+
+	log.Printf("✅ LangGraph AI analysis successful for user=%s | %d tags", c.UserID, len(response.Tags))
+	return response, nil
 }
 
 // MockAnalyzeContent provides a mock implementation for testing or when AI service is unavailable
@@ -233,4 +232,17 @@ func (c *AIClient) MockAnalyzeContent(ctx context.Context, content, source strin
 		Keywords:    []string{"mock", "keywords"},
 		ProcessedAt: time.Now().Format(time.RFC3339),
 	}, nil
+}
+
+// detectAIPath intelligently determines the correct API path based on BaseURL
+func detectAIPath(baseURL string) string {
+	lower := strings.ToLower(baseURL)
+	switch {
+	case strings.Contains(lower, "langchain"):
+		return "api/v1/analyze"
+	case strings.Contains(lower, "fastapi") || strings.HasSuffix(lower, "/api"):
+		return "api/v1/analyze"
+	default:
+		return "v1/analyze"
+	}
 }

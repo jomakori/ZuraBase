@@ -497,27 +497,37 @@ func HandleTestLLMConnection(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
+// Correct misplaced code after the last closing brace
+// Ensure file ends cleanly and remove lingering incomplete syntax blocks
+
 // testLLMConnection performs an actual connection test to the LLM server
 func testLLMConnection(serverURL, apiKey string) (bool, string) {
-	// Create HTTP client with timeout
-	client := &http.Client{
-		Timeout: 30 * time.Second,
+	log.Printf("[Debug] Testing connectivity - serverURL: '%s'", serverURL)
+
+	if apiKey == "" {
+		return false, "API key required for testing connection"
 	}
 
-	// Determine the actual server URL to test
-	testServerURL := serverURL
-	if testServerURL == "" {
-		// Use default OpenAI API endpoint
-		testServerURL = "https://api.openai.com"
+	// FIX: Ensure proper default URL if empty
+	if serverURL == "" {
+		serverURL = "https://api.openai.com"
+		log.Printf("[Debug] Using default serverURL: %s", serverURL)
 	}
 
-	// Test endpoint depends on the server URL
-	testURL := testServerURL + "/v1/models"
+	// FIX: Ensure proper URL scheme
+	serverURL = strings.TrimSpace(serverURL)
+	if !strings.HasPrefix(serverURL, "http://") && !strings.HasPrefix(serverURL, "https://") {
+		serverURL = "https://" + strings.TrimPrefix(serverURL, "/")
+		log.Printf("[Debug] Added scheme, serverURL: %s", serverURL)
+	}
 
-	log.Printf("Testing connection to: %s", testURL)
+	client := &http.Client{Timeout: 15 * time.Second}
+	// FIX: Proper path construction
+	baseURL := strings.TrimSuffix(serverURL, "/")
+	url := fmt.Sprintf("%s/v1/models", baseURL)
+	log.Printf("[Debug] Final URL: %s", url)
 
-	// For OpenAI-compatible servers, we can test the models endpoint
-	req, err := http.NewRequest("GET", testURL, nil)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		return false, fmt.Sprintf("Failed to create request: %v", err)
 	}
@@ -531,49 +541,29 @@ func testLLMConnection(serverURL, apiKey string) (bool, string) {
 	}
 	defer resp.Body.Close()
 
-	// Read the response body first
-	body, err := io.ReadAll(resp.Body)
+	data, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return false, fmt.Sprintf("Failed to read response: %v", err)
 	}
 
-	// Check response status
 	if resp.StatusCode != http.StatusOK {
-		// Try to parse error response for better error messages
-		var errorResp struct {
-			Error struct {
-				Message string `json:"message"`
-				Type    string `json:"type"`
-			} `json:"error"`
-		}
-
-		if err := json.Unmarshal(body, &errorResp); err == nil && errorResp.Error.Message != "" {
-			return false, fmt.Sprintf("API Error: %s", errorResp.Error.Message)
-		}
-
-		return false, fmt.Sprintf("Server returned status %d: %s", resp.StatusCode, string(body))
+		return false, fmt.Sprintf("Server returned status %d: %s", resp.StatusCode, string(data))
 	}
 
-	// Try to parse the response to validate it's a valid LLM API
-	var response struct {
-		Data []struct {
+	var jsonResp struct {
+		Object string `json:"object"`
+		Data   []struct {
 			ID string `json:"id"`
 		} `json:"data"`
-		Object string `json:"object"`
+	}
+	if err := json.Unmarshal(data, &jsonResp); err == nil && jsonResp.Object == "list" {
+		count := len(jsonResp.Data)
+		if count > 0 {
+			return true, fmt.Sprintf("Connection successful - %d models available", count)
+		}
 	}
 
-	if err := json.Unmarshal(body, &response); err != nil {
-		// If we can't parse the response, it might not be an OpenAI-compatible API
-		// but we'll still consider it successful if we got a 200 response
-		return true, "Connection successful (non-standard API response)"
-	}
-
-	// Check if we got a valid response structure
-	if response.Object == "list" && len(response.Data) > 0 {
-		return true, fmt.Sprintf("Connection successful - %d models available", len(response.Data))
-	}
-
-	return true, "Connection successful"
+	return true, "Connection successful but no models found"
 }
 
 // HandleTestStoredLLMConnection handles POST /api/llm-profiles/:id/test-stored-connection
@@ -589,6 +579,18 @@ func HandleTestStoredLLMConnection(w http.ResponseWriter, r *http.Request, id st
 	userID, _ := r.Context().Value("user_id").(string)
 	if userID == "" {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	// Validate profile ID
+	if id == "" {
+		log.Printf("Error: Empty profile ID provided for test-stored-connection")
+		response := map[string]interface{}{
+			"success": false,
+			"error":   "Profile ID is required",
+		}
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(response)
 		return
 	}
 
@@ -615,7 +617,20 @@ func HandleTestStoredLLMConnection(w http.ResponseWriter, r *http.Request, id st
 		return
 	}
 
+	// Check if the API key is available
+	if profile.APIKey == "" {
+		log.Printf("Error: No API key found for profile %s", profile.ID)
+		response := map[string]interface{}{
+			"success": false,
+			"message": "No API key configured for this profile",
+		}
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
 	// Test the connection using the stored API key
+	log.Printf("Testing stored connection for profile %s (user: %s)", profile.ID, userID)
 	success, message := testLLMConnection(profile.ServerURL, profile.APIKey)
 
 	response := map[string]interface{}{
@@ -644,12 +659,31 @@ func isValidURL(urlStr string) bool {
 	return true
 }
 
-// HandleListAvailableModels handles GET /api/llm-profiles/models
-// Lists available models from the user's default LLM profile connection.
+// HandleListLangChainServices handles GET /api/llm-profiles/services
+// Returns a static list of supported LangChain-compatible LLM providers.
+func HandleListLangChainServices(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 
-// Basic URL validation - check for http:// or https:// prefix
+	w.Header().Set("Content-Type", "application/json")
+
+	services := []map[string]string{
+		{"id": "openai", "name": "OpenAI"},
+		{"id": "anthropic", "name": "Anthropic"},
+		{"id": "ollama", "name": "Ollama"},
+		{"id": "together", "name": "Together.ai"},
+		{"id": "huggingface", "name": "HuggingFace Hub"},
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"services": services,
+	})
+}
+
 // HandleListAvailableModels handles GET /api/llm-profiles/models
-// It dynamically fetches available models from the user's default LLM profile
+// It dynamically fetches available models from LLM providers
 func HandleListAvailableModels(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -664,37 +698,82 @@ func HandleListAvailableModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
-	defer cancel()
-	profile, err := models.GetDefaultLLMProfile(ctx, userID)
-	if err != nil || profile == nil {
-		http.Error(w, "No default LLM profile found", http.StatusNotFound)
-		return
+	// Get parameters from query string
+	apiKey := r.URL.Query().Get("apiKey")
+	serverURL := r.URL.Query().Get("serverURL")
+	service := r.URL.Query().Get("service")
+
+	// If no API key provided in query, try to use user's default profile
+	if apiKey == "" {
+		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		defer cancel()
+
+		profile, err := models.GetDefaultLLMProfile(ctx, userID)
+		if err != nil || profile == nil {
+			http.Error(w, "No API key provided and no default LLM profile found", http.StatusBadRequest)
+			return
+		}
+		apiKey = profile.APIKey
+		if serverURL == "" && profile.ServerURL != "" {
+			serverURL = profile.ServerURL
+		}
+	}
+
+	if serverURL == "" {
+		serverURL = "https://api.openai.com"
+	}
+	if service == "" {
+		service = "openai"
 	}
 
 	client := &http.Client{Timeout: 30 * time.Second}
-	url := fmt.Sprintf("%s/v1/models", profile.ServerURL)
-	req, err := http.NewRequest("GET", url, nil)
+
+	var modelURL string
+	switch {
+	case strings.Contains(service, "ollama"), strings.Contains(serverURL, "11434"):
+		modelURL = "http://localhost:11434/api/tags"
+	case strings.Contains(service, "huggingface"):
+		modelURL = "https://huggingface.co/api/models"
+	case strings.Contains(service, "anthropic"):
+		modelURL = "https://api.anthropic.com/v1/models"
+	default:
+		modelURL = fmt.Sprintf("%s/v1/models", strings.TrimSuffix(serverURL, "/"))
+	}
+
+	req, err := http.NewRequest("GET", modelURL, nil)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Error creating request: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Failed to create model request: %v", err), http.StatusInternalServerError)
 		return
 	}
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", profile.APIKey))
+
+	if apiKey != "" {
+		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", strings.TrimSpace(apiKey)))
+	} else {
+		log.Printf("[Warning] No API key provided for external model request to %s", modelURL)
+		http.Error(w, "API key is required to fetch models", http.StatusBadRequest)
+		return
+	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
 
 	resp, err := client.Do(req)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to fetch models: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Failed to contact LLM API (%s): %v", modelURL, err), http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to read response: %v", err), http.StatusInternalServerError)
+	body, readErr := io.ReadAll(resp.Body)
+	if readErr != nil {
+		http.Error(w, fmt.Sprintf("Failed to read response: %v", readErr), http.StatusInternalServerError)
 		return
 	}
 
-	w.WriteHeader(resp.StatusCode)
+	if resp.StatusCode != http.StatusOK {
+		http.Error(w, fmt.Sprintf("Error retrieving models: %s", string(body)), resp.StatusCode)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
 	w.Write(body)
 }

@@ -16,6 +16,7 @@ export const useStrands = (params?: StrandQueryParams) => {
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<Error | null>(null);
   const [count, setCount] = useState<number>(0);
+  const [refetchTrigger, setRefetchTrigger] = useState(0);
 
   useEffect(() => {
     const fetchStrands = async () => {
@@ -32,12 +33,14 @@ export const useStrands = (params?: StrandQueryParams) => {
       }
     };
 
-    // run once on mount
     fetchStrands();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params?.tags?.join(","), params?.page, params?.limit, refetchTrigger]);
+
+  const refetch = useCallback(() => {
+    setRefetchTrigger((prev) => prev + 1);
   }, []);
 
-  return { strands, loading, error, count };
+  return { strands, loading, error, count, refetch };
 };
 
 /**
@@ -50,68 +53,70 @@ export const useStrand = (id: string) => {
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<Error | null>(null);
 
-  useEffect(() => {
+  const fetchStrand = useCallback(async () => {
     if (!id) {
       setLoading(false);
       return;
     }
 
-    const fetchStrand = async () => {
-      try {
-        setLoading(true);
-        const response = await StrandsApi.getStrand(id);
-        setStrand(response.strand || null);
-        setError(null);
-      } catch (err) {
-        console.error(`Error fetching strand ${id}:`, err);
-        setError(err instanceof Error ? err : new Error(String(err)));
+    try {
+      setLoading(true);
+      const response = await StrandsApi.getStrand(id);
+      setStrand(response.strand || null);
+      setError(null);
+    } catch (err) {
+      console.error(`Error fetching strand ${id}:`, err);
+      setError(err instanceof Error ? err : new Error(String(err)));
 
-        // Add retry logic with exponential backoff
-        const retryFetch = (retryCount = 0, maxRetries = 3) => {
-          if (retryCount >= maxRetries) {
+      // Add retry logic with exponential backoff
+      const retryFetch = (retryCount = 0, maxRetries = 3) => {
+        if (retryCount >= maxRetries) {
+          console.error(`Max retries (${maxRetries}) reached for strand ${id}`);
+          return;
+        }
+
+        const delay = Math.pow(2, retryCount) * 1000; // Exponential backoff: 1s, 2s, 4s
+        console.log(
+          `Retrying fetch for strand ${id} in ${delay}ms (attempt ${
+            retryCount + 1
+          }/${maxRetries})`
+        );
+
+        setTimeout(async () => {
+          try {
+            const retryResponse = await StrandsApi.getStrand(id);
+            setStrand(retryResponse.strand || null);
+            setError(null);
+            setLoading(false);
+          } catch (retryErr) {
             console.error(
-              `Max retries (${maxRetries}) reached for strand ${id}`
+              `Retry ${retryCount + 1} failed for strand ${id}:`,
+              retryErr
             );
-            return;
+            retryFetch(retryCount + 1, maxRetries);
           }
+        }, delay);
+      };
 
-          const delay = Math.pow(2, retryCount) * 1000; // Exponential backoff: 1s, 2s, 4s
-          console.log(
-            `Retrying fetch for strand ${id} in ${delay}ms (attempt ${
-              retryCount + 1
-            }/${maxRetries})`
-          );
+      // Start retry process
+      retryFetch();
+    } finally {
+      setLoading(false);
+    }
+  }, [id]);
 
-          setTimeout(async () => {
-            try {
-              const retryResponse = await StrandsApi.getStrand(id);
-              setStrand(retryResponse.strand || null);
-              setError(null);
-              setLoading(false);
-            } catch (retryErr) {
-              console.error(
-                `Retry ${retryCount + 1} failed for strand ${id}:`,
-                retryErr
-              );
-              retryFetch(retryCount + 1, maxRetries);
-            }
-          }, delay);
-        };
-
-        // Start retry process
-        retryFetch();
-      } finally {
-        setLoading(false);
-      }
-    };
-
+  useEffect(() => {
     // Only fetch if we have a valid ID
     if (id) {
       fetchStrand();
     }
-  }, [id]);
+  }, [id, fetchStrand]);
 
-  return { strand, loading, error };
+  const refetch = useCallback(() => {
+    fetchStrand();
+  }, [fetchStrand]);
+
+  return { strand, loading, error, refetch };
 };
 
 /**
@@ -143,10 +148,7 @@ export const useCreateStrand = () => {
       console.error("Strand creation failed:", normalizedError);
       setError(normalizedError);
 
-      // More informative error message
-      alert(
-        "Your strand was not saved. Please try again or contact support if the problem persists."
-      );
+      // Error is now handled by the component using this hook
       return Promise.reject(normalizedError);
     } finally {
       setLoading(false);

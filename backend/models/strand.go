@@ -3,7 +3,6 @@ package models
 import (
 	"context"
 	"log"
-	"math"
 	"strings"
 	"time"
 
@@ -12,18 +11,28 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
+// SyncLog represents a single sync operation's result
+type SyncLog struct {
+	Timestamp  time.Time `json:"timestamp" bson:"timestamp"`
+	Summary    string    `json:"summary" bson:"summary"`
+	Tags       []string  `json:"tags" bson:"tags"`
+	SyncedByAI bool      `json:"synced_by_ai" bson:"synced_by_ai"`
+	Notes      string    `json:"notes,omitempty" bson:"notes,omitempty"`
+}
+
 // Strand represents a piece of captured information that has been enriched with AI
 type Strand struct {
-	ID          string    `json:"id" bson:"id"`
-	UserID      string    `json:"user_id" bson:"user_id"`
-	Content     string    `json:"content" bson:"content"`
-	Source      string    `json:"source" bson:"source"` // "whatsapp", "manual", etc.
-	Tags        []string  `json:"tags" bson:"tags"`
-	Summary     string    `json:"summary" bson:"summary"`
-	RelatedIDs  []string  `json:"related_ids" bson:"related_ids"`
-	SyncedWithAI bool     `json:"synced_with_ai" bson:"synced_with_ai"`
-	CreatedAt   time.Time `json:"created_at" bson:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at" bson:"updated_at"`
+	ID           string    `json:"id" bson:"id"`
+	UserID       string    `json:"user_id" bson:"user_id"`
+	Content      string    `json:"content" bson:"content"`
+	Source       string    `json:"source" bson:"source"` // "whatsapp", "manual", etc.
+	Tags         []string  `json:"tags" bson:"tags"`
+	Summary      string    `json:"summary" bson:"summary"`
+	RelatedIDs   []string  `json:"related_ids" bson:"related_ids"`
+	SyncedWithAI bool      `json:"synced_with_ai" bson:"synced_with_ai"`
+	SyncHistory  []SyncLog `json:"sync_history" bson:"sync_history"`
+	CreatedAt    time.Time `json:"created_at" bson:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at" bson:"updated_at"`
 }
 
 var strandCollection *mongo.Collection
@@ -56,11 +65,12 @@ func Initialize(client *mongo.Client, dbName string) {
 
 // SaveStrand saves or updates a strand in the database
 func SaveStrand(ctx context.Context, strand *Strand) (*Strand, error) {
-	log.Printf("SaveStrand: saving strand with ID=%s for user=%s", strand.ID, strand.UserID)
+	log.Printf("💾 Saving strand ID=%s (user=%s, synced=%v)", strand.ID, strand.UserID, strand.SyncedWithAI)
 
-	// Create a timeout context to prevent hanging operations
-	timeoutCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
+	// Ensure explicit boolean default
+	if strand.SyncedWithAI != true && strand.SyncedWithAI != false {
+		strand.SyncedWithAI = false
+	}
 
 	now := time.Now()
 	if strand.CreatedAt.IsZero() {
@@ -68,50 +78,21 @@ func SaveStrand(ctx context.Context, strand *Strand) (*Strand, error) {
 	}
 	strand.UpdatedAt = now
 
-	// Create a copy of the strand to avoid potential race conditions
-	strandCopy := *strand
+	// Basic context protection
+	timeoutCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
 
-	// Use a more robust error handling approach
-	var err error
-	var result *mongo.UpdateResult
-	
-	// Retry logic with exponential backoff
-	maxRetries := 3
-	for attempt := 0; attempt < maxRetries; attempt++ {
-		if attempt > 0 {
-			// Wait with exponential backoff before retrying
-			backoffDuration := time.Duration(math.Pow(2, float64(attempt))) * 100 * time.Millisecond
-			time.Sleep(backoffDuration)
-			log.Printf("SaveStrand: retry attempt %d for strand ID=%s", attempt+1, strand.ID)
-		}
-
-		filter := bson.M{"id": strand.ID}
-		update := bson.M{"$set": strandCopy}
-		opts := options.Update().SetUpsert(true)
-
-		// Use the timeout context to prevent hanging
-		result, err = strandCollection.UpdateOne(timeoutCtx, filter, update, opts)
-		
-		if err == nil {
-			// Operation succeeded
-			log.Printf("SaveStrand: successfully saved strand ID=%s (upserted=%v, modified=%v)",
-				strand.ID, result.UpsertedCount > 0, result.ModifiedCount > 0)
-			return strand, nil
-		}
-		
-		// Check if context deadline exceeded or connection error
-		if timeoutCtx.Err() != nil || isConnectionError(err) {
-			log.Printf("SaveStrand: temporary error saving strand ID=%s: %v", strand.ID, err)
-			continue // Retry
-		}
-		
-		// For other errors, break the loop
-		break
+	filter := bson.M{"id": strand.ID}
+	update := bson.M{"$set": strand}
+	opts := options.Update().SetUpsert(true)
+	_, err := strandCollection.UpdateOne(timeoutCtx, filter, update, opts)
+	if err != nil {
+		log.Printf("❌ SaveStrand error for ID=%s: %v", strand.ID, err)
+		return nil, err
 	}
 
-	// If we got here, all retries failed or a non-retryable error occurred
-	log.Printf("SaveStrand: error saving strand ID=%s after %d attempts: %v", strand.ID, maxRetries, err)
-	return nil, err
+	log.Printf("✅ Strand %s saved successfully (SyncedWithAI=%v)", strand.ID, strand.SyncedWithAI)
+	return strand, nil
 }
 
 // isConnectionError checks if an error is related to connection issues
@@ -119,7 +100,7 @@ func isConnectionError(err error) bool {
 	if err == nil {
 		return false
 	}
-	
+
 	errMsg := err.Error()
 	connectionErrors := []string{
 		"connection refused",
@@ -129,13 +110,13 @@ func isConnectionError(err error) bool {
 		"server selection timeout",
 		"connection closed",
 	}
-	
+
 	for _, msg := range connectionErrors {
 		if strings.Contains(strings.ToLower(errMsg), msg) {
 			return true
 		}
 	}
-	
+
 	return false
 }
 
@@ -235,51 +216,51 @@ func GetAllTags(ctx context.Context, userID string) ([]string, error) {
 
 // GetUnsyncedStrands retrieves all strands that haven't been synced with AI
 func GetUnsyncedStrands(ctx context.Context) ([]Strand, error) {
-  filter := bson.M{"synced_with_ai": false}
+	filter := bson.M{"synced_with_ai": false}
 
-  cursor, err := strandCollection.Find(ctx, filter)
-  if err != nil {
-    return nil, err
-  }
-  defer cursor.Close(ctx)
+	cursor, err := strandCollection.Find(ctx, filter)
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
 
-  var strands []Strand
-  for cursor.Next(ctx) {
-    var strand Strand
-    if err := cursor.Decode(&strand); err != nil {
-      return nil, err
-    }
-    strands = append(strands, strand)
-  }
-  if err := cursor.Err(); err != nil {
-    return nil, err
-  }
-  return strands, nil
+	var strands []Strand
+	for cursor.Next(ctx) {
+		var strand Strand
+		if err := cursor.Decode(&strand); err != nil {
+			return nil, err
+		}
+		strands = append(strands, strand)
+	}
+	if err := cursor.Err(); err != nil {
+		return nil, err
+	}
+	return strands, nil
 }
 
 // GetUnsyncedStrandsByUser retrieves all unsynced strands for a specific user
 func GetUnsyncedStrandsByUser(ctx context.Context, userID string) ([]Strand, error) {
-  filter := bson.M{
-    "user_id": userID,
-    "synced_with_ai": false,
-  }
+	filter := bson.M{
+		"user_id":        userID,
+		"synced_with_ai": false,
+	}
 
-  cursor, err := strandCollection.Find(ctx, filter)
-  if err != nil {
-    return nil, err
-  }
-  defer cursor.Close(ctx)
+	cursor, err := strandCollection.Find(ctx, filter)
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
 
-  var strands []Strand
-  for cursor.Next(ctx) {
-    var strand Strand
-    if err := cursor.Decode(&strand); err != nil {
-      return nil, err
-    }
-    strands = append(strands, strand)
-  }
-  if err := cursor.Err(); err != nil {
-    return nil, err
-  }
-  return strands, nil
+	var strands []Strand
+	for cursor.Next(ctx) {
+		var strand Strand
+		if err := cursor.Decode(&strand); err != nil {
+			return nil, err
+		}
+		strands = append(strands, strand)
+	}
+	if err := cursor.Err(); err != nil {
+		return nil, err
+	}
+	return strands, nil
 }

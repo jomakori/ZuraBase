@@ -3,13 +3,15 @@ package llm_profiles
 import (
 	"net/http"
 	"strings"
+
+	"zurabase/auth"
 )
 
-// RegisterRoutes registers the LLM profiles API routes
+// RegisterRoutes registers the LLM profiles API routes with authentication
 func RegisterRoutes(mux *http.ServeMux) {
 	// GET /api/llm-profiles - List all profiles for the current user
 	// POST /api/llm-profiles - Create a new profile
-	mux.HandleFunc("/api/llm-profiles", func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("/api/llm-profiles", auth.AuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
 			HandleGetLLMProfiles(w, r)
@@ -18,16 +20,16 @@ func RegisterRoutes(mux *http.ServeMux) {
 		default:
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		}
-	})
+	})))
 
-	// List available models from server
-	mux.HandleFunc("/api/llm-profiles/models", HandleListAvailableModels)
+	// List available models from server - requires authentication
+	mux.Handle("/api/llm-profiles/models", auth.AuthMiddleware(http.HandlerFunc(HandleListAvailableModels)))
 
-	// Test connection to LLM server
-	mux.HandleFunc("/api/llm-profiles/test-connection", HandleTestLLMConnection)
+	// Test connection to LLM server - requires authentication
+	mux.Handle("/api/llm-profiles/test-connection", auth.AuthMiddleware(http.HandlerFunc(HandleTestLLMConnection)))
 
-	// Handle routes with ID parameter
-	mux.HandleFunc("/api/llm-profiles/", func(w http.ResponseWriter, r *http.Request) {
+	// Handle routes with ID parameter - requires authentication
+	mux.Handle("/api/llm-profiles/", auth.AuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := strings.TrimPrefix(r.URL.Path, "/api/llm-profiles/")
 		segments := strings.Split(path, "/")
 		if len(segments) == 0 || segments[0] == "" {
@@ -68,5 +70,5 @@ func RegisterRoutes(mux *http.ServeMux) {
 		default:
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		}
-	})
+	})))
 }

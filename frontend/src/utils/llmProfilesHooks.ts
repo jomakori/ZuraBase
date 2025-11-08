@@ -1,9 +1,11 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { useLocation } from "react-router-dom";
 import {
   LLMProfilesApi,
   LLMProfile,
   LLMProfileRequest,
 } from "./llmProfilesApi";
+import { log } from "./clientLogger";
 
 /**
  * Custom hooks for LLM profiles management
@@ -11,31 +13,94 @@ import {
 
 /**
  * Hook to fetch all LLM profiles for the current user
+ * Optimized for idempotency and controlled fetching - executes on strands and settings routes
  * @returns Query result with profiles data
  */
 export const useLLMProfiles = () => {
+  const location = useLocation();
   const [profiles, setProfiles] = useState<LLMProfile[]>([]);
-  const [loading, setLoading] = useState<boolean>(true);
+  const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<Error | null>(null);
 
-  const fetchProfiles = useCallback(async () => {
-    try {
+  // Use ref flags to prevent re-fetches between route redraws
+  const hasFetchedOnce = useRef(false);
+  const abortControllerRef = useRef<AbortController | null>(null);
+
+  const shouldFetch = useCallback(() => {
+    // Fetch on both `/strands` and `/settings` pages
+    return (
+      location.pathname.startsWith("/strands") ||
+      location.pathname.startsWith("/settings")
+    );
+  }, [location.pathname]);
+
+  const fetchProfiles = useCallback(
+    async (forceRefresh = false) => {
+      if (!shouldFetch()) {
+        log.debug("Skipping fetch - not on strands or settings route");
+        return;
+      }
+
+      if (!forceRefresh && hasFetchedOnce.current) {
+        log.debug(
+          "Skipping redundant fetch — already fetched on this session."
+        );
+        return;
+      }
+
+      // Cancel any pending request
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+
+      hasFetchedOnce.current = true;
       setLoading(true);
-      const response = await LLMProfilesApi.getProfiles();
-      setProfiles(response.profiles || []);
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err : new Error(String(err)));
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+      abortControllerRef.current = new AbortController();
 
+      log.info("Fetching profiles for current session…");
+      try {
+        const response = await LLMProfilesApi.getProfiles();
+        setProfiles(response.profiles || []);
+        setError(null);
+        log.info(`Loaded ${response.profiles?.length || 0} profiles.`);
+      } catch (err) {
+        // Don't set error if request was aborted
+        if (err instanceof Error && err.name === "AbortError") {
+          log.debug("Request aborted");
+          return;
+        }
+
+        const normalizedError =
+          err instanceof Error ? err : new Error(String(err));
+        log.error("Failed to load profiles:", normalizedError.message);
+        setError(normalizedError);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [shouldFetch]
+  );
+
+  // Strict effect lifecycle: runs only when route changes to strands or settings
   useEffect(() => {
-    fetchProfiles();
-  }, [fetchProfiles]);
+    if (shouldFetch()) {
+      fetchProfiles();
+    }
 
-  return { profiles, loading, error, refetch: fetchProfiles };
+    // Cleanup any pending requests when component unmounts
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+    };
+  }, [shouldFetch, fetchProfiles]);
+
+  return {
+    profiles,
+    loading,
+    error,
+    refetch: () => fetchProfiles(true),
+  };
 };
 
 /**
@@ -245,6 +310,5 @@ export const useDefaultLLMProfile = () => {
   const { profiles, loading, error } = useLLMProfiles();
 
   const defaultProfile = profiles.find((profile) => profile.is_default) || null;
-
   return { defaultProfile, loading, error };
 };

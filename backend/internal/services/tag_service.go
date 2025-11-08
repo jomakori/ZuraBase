@@ -26,15 +26,16 @@ func NewTagService(aiClient *AIClient) *TagService {
 func (s *TagService) ExtractTagsFromContent(ctx context.Context, content, source string) ([]string, string, error) {
 	log.Printf("Extracting tags from content with source: %s", source)
 
+	// Check if AI client is available
+	if s.aiClient == nil {
+		return nil, "", fmt.Errorf("AI client not configured. Please set up an LLM profile in settings")
+	}
+
 	// Use the AI client to analyze the content
 	analysis, err := s.aiClient.AnalyzeContent(ctx, content, source)
 	if err != nil {
-		log.Printf("Error analyzing content: %v. Falling back to mock analysis.", err)
-		// Fall back to mock analysis if the AI service is unavailable
-		analysis, err = s.aiClient.MockAnalyzeContent(ctx, content, source)
-		if err != nil {
-			return nil, "", err
-		}
+		log.Printf("Error analyzing content: %v", err)
+		return nil, "", fmt.Errorf("AI analysis failed: %w", err)
 	}
 
 	// Process and normalize tags
@@ -46,6 +47,11 @@ func (s *TagService) ExtractTagsFromContent(ctx context.Context, content, source
 // ExtractTagsFromContentWithContext uses the AI client to extract tags from content with additional context
 func (s *TagService) ExtractTagsFromContentWithContext(ctx context.Context, content, source string, relatedStrands []models.Strand) ([]string, string, error) {
 	log.Printf("Extracting tags from content with source: %s and %d related strands for context", source, len(relatedStrands))
+
+	// Check if AI client is available
+	if s.aiClient == nil {
+		return nil, "", fmt.Errorf("AI client not configured. Please set up an LLM profile in settings")
+	}
 
 	// Build context from related strands
 	contextContent := content
@@ -65,12 +71,8 @@ func (s *TagService) ExtractTagsFromContentWithContext(ctx context.Context, cont
 	// Use the AI client to analyze the content with context
 	analysis, err := s.aiClient.AnalyzeContent(ctx, contextContent, source)
 	if err != nil {
-		log.Printf("Error analyzing content with context: %v. Falling back to basic analysis.", err)
-		// Fall back to basic analysis if the AI service is unavailable
-		analysis, err = s.aiClient.MockAnalyzeContent(ctx, content, source)
-		if err != nil {
-			return nil, "", err
-		}
+		log.Printf("Error analyzing content with context: %v", err)
+		return nil, "", fmt.Errorf("AI analysis failed: %w", err)
 	}
 
 	// Process and normalize tags
@@ -162,18 +164,34 @@ func (s *TagService) UpdateStrandTags(ctx context.Context, strandID string, tags
 
 // MergeTags combines user-provided tags with AI-generated tags
 func (s *TagService) MergeTags(userTags, aiTags []string) []string {
-	// Start with normalized user tags
-	mergedTags := s.normalizeTags(userTags)
+	// Normalize both sets of tags
+	userTags = s.normalizeTags(userTags)
+	aiTags = s.normalizeTags(aiTags)
 
-	// Add AI tags that aren't already in the list
-	for _, tag := range aiTags {
-		tag = strings.ToLower(strings.TrimSpace(tag))
-		if tag != "" && !contains(mergedTags, tag) {
-			mergedTags = append(mergedTags, tag)
+	// Create a map to prevent duplicates while merging
+	tagMap := make(map[string]struct{})
+
+	// Merge user-provided tags first
+	for _, tag := range userTags {
+		tagLower := strings.ToLower(strings.TrimSpace(tag))
+		if tagLower != "" && tagLower != "manual" {
+			tagMap[tagLower] = struct{}{}
 		}
 	}
 
-	// Sort the final list
+	// Merge AI-generated tags
+	for _, tag := range aiTags {
+		tagLower := strings.ToLower(strings.TrimSpace(tag))
+		if tagLower != "" && tagLower != "manual" {
+			tagMap[tagLower] = struct{}{}
+		}
+	}
+
+	// Convert the map back to a sorted slice
+	var mergedTags []string
+	for tag := range tagMap {
+		mergedTags = append(mergedTags, tag)
+	}
 	sort.Strings(mergedTags)
 
 	return mergedTags

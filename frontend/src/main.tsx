@@ -10,6 +10,7 @@ import "./index.css";
 (window as any).__REACT_ROUTER_FUTURE_FLAGS__ = {
   v7_startTransition: true,
   v7_relativeSplatPath: true,
+  v7_fetcherPersist: true,
 };
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(

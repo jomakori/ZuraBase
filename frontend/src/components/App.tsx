@@ -13,6 +13,7 @@ import HomePage from "./HomePage";
 import SettingsPage from "./SettingsPage";
 import LoadingSplash from "./LoadingSplash";
 import AIConnectionStatus from "./LLMConnectionStatus";
+import { LLMProfilesProvider } from "../context/LLMProfilesProvider";
 
 /**
  * Main App component that serves as a landing page for the application.
@@ -61,17 +62,19 @@ const AppContent = () => {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <NavBar currentPage={currentPage} />
-      <Routes>
-        <Route path="/" element={<HomePage />} />
-        <Route path="/notes/*" element={<NotesApp />} />
-        <Route path="/planner/*" element={<PlannerApp />} />
-        <Route path="/strands/*" element={<StrandsApp />} />
-        <Route path="/settings" element={<SettingsPage />} />
-      </Routes>
-      <AIConnectionStatus />
-    </div>
+    <LLMProfilesProvider>
+      <div className="min-h-screen bg-gray-50">
+        <NavBar currentPage={currentPage} />
+        <Routes>
+          <Route path="/" element={<HomePage />} />
+          <Route path="/notes/*" element={<NotesApp />} />
+          <Route path="/planner/*" element={<PlannerApp />} />
+          <Route path="/strands/*" element={<StrandsApp />} />
+          <Route path="/settings" element={<SettingsPage />} />
+        </Routes>
+        <AIConnectionStatus />
+      </div>
+    </LLMProfilesProvider>
   );
 };
 
