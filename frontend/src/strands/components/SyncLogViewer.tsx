@@ -107,6 +107,9 @@ const SyncLogViewer: React.FC<SyncLogViewerProps> = ({
     if (log.synced_by_ai) {
       return "border-green-300 bg-green-50";
     }
+    if (log.notes?.includes("failed")) {
+      return "border-red-300 bg-red-50";
+    }
     return "border-gray-200 bg-gray-50";
   };
 
@@ -133,16 +136,23 @@ const SyncLogViewer: React.FC<SyncLogViewerProps> = ({
           const isRollbackConfirm = rollbackConfirm === index;
           const isHovered = hoveredIndex === index;
           const previousLog = index > 0 ? syncHistory[index - 1] : null;
-          
+
           // Calculate diffs for hover preview
-          const tagDiff = previousLog ? getTagDiff(log.tags, previousLog.tags) : null;
-          const summaryDiff = previousLog ? getSummaryDiff(log.summary, previousLog.summary) : null;
+          const tagDiff = previousLog
+            ? getTagDiff(log.tags, previousLog.tags)
+            : null;
+          const summaryDiff = previousLog
+            ? getSummaryDiff(log.summary, previousLog.summary)
+            : null;
 
           return (
             <div
               key={index}
-              className={`border rounded-lg overflow-hidden transition-all ${getLogColor(log, index)} ${
-                isHovered ? 'shadow-md scale-[1.01]' : 'hover:border-gray-400'
+              className={`border rounded-lg overflow-hidden transition-all ${getLogColor(
+                log,
+                index
+              )} ${
+                isHovered ? "shadow-md scale-[1.01]" : "hover:border-gray-400"
               }`}
               onMouseEnter={() => setHoveredIndex(index)}
               onMouseLeave={() => setHoveredIndex(null)}
@@ -170,61 +180,90 @@ const SyncLogViewer: React.FC<SyncLogViewerProps> = ({
                           Rollback
                         </span>
                       )}
+                      {log.notes?.includes("failed") && (
+                        <span className="inline-flex items-center px-2 py-0.5 text-xs font-medium rounded-full bg-red-100 text-red-800">
+                          ✗ Sync Failed
+                        </span>
+                      )}
                     </div>
                     <p className="text-sm text-gray-600">
                       {isExpanded ? log.summary : truncateSummary(log.summary)}
                     </p>
-                    
+
                     {/* Hover Preview */}
                     {isHovered && previousLog && !isExpanded && (
                       <div className="mt-3 p-3 bg-white rounded border border-gray-300 shadow-sm">
-                        <div className="text-xs font-semibold text-gray-700 mb-2">Changes from previous version:</div>
-                        
+                        <div className="text-xs font-semibold text-gray-700 mb-2">
+                          Changes from previous version:
+                        </div>
+
                         {/* Summary Diff */}
                         {summaryDiff && (
                           <div className="mb-2">
-                            <span className="text-xs text-gray-600">Summary: </span>
-                            <span className={`text-xs ${
-                              summaryDiff.type === 'unchanged' ? 'text-gray-500' : 'text-blue-600 font-medium'
-                            }`}>
+                            <span className="text-xs text-gray-600">
+                              Summary:{" "}
+                            </span>
+                            <span
+                              className={`text-xs ${
+                                summaryDiff.type === "unchanged"
+                                  ? "text-gray-500"
+                                  : "text-blue-600 font-medium"
+                              }`}
+                            >
                               {summaryDiff.text}
                             </span>
                           </div>
                         )}
-                        
+
                         {/* Tag Diff */}
-                        {tagDiff && (tagDiff.added.length > 0 || tagDiff.removed.length > 0) && (
-                          <div className="space-y-1">
-                            {tagDiff.added.length > 0 && (
-                              <div className="flex items-start gap-1">
-                                <span className="text-xs text-green-600 font-medium">+</span>
-                                <div className="flex flex-wrap gap-1">
-                                  {tagDiff.added.map((tag, i) => (
-                                    <span key={i} className="text-xs px-1.5 py-0.5 bg-green-100 text-green-700 rounded">
-                                      {tag}
-                                    </span>
-                                  ))}
+                        {tagDiff &&
+                          (tagDiff.added.length > 0 ||
+                            tagDiff.removed.length > 0) && (
+                            <div className="space-y-1">
+                              {tagDiff.added.length > 0 && (
+                                <div className="flex items-start gap-1">
+                                  <span className="text-xs text-green-600 font-medium">
+                                    +
+                                  </span>
+                                  <div className="flex flex-wrap gap-1">
+                                    {tagDiff.added.map((tag, i) => (
+                                      <span
+                                        key={i}
+                                        className="text-xs px-1.5 py-0.5 bg-green-100 text-green-700 rounded"
+                                      >
+                                        {tag}
+                                      </span>
+                                    ))}
+                                  </div>
                                 </div>
-                              </div>
-                            )}
-                            {tagDiff.removed.length > 0 && (
-                              <div className="flex items-start gap-1">
-                                <span className="text-xs text-red-600 font-medium">-</span>
-                                <div className="flex flex-wrap gap-1">
-                                  {tagDiff.removed.map((tag, i) => (
-                                    <span key={i} className="text-xs px-1.5 py-0.5 bg-red-100 text-red-700 rounded line-through">
-                                      {tag}
-                                    </span>
-                                  ))}
+                              )}
+                              {tagDiff.removed.length > 0 && (
+                                <div className="flex items-start gap-1">
+                                  <span className="text-xs text-red-600 font-medium">
+                                    -
+                                  </span>
+                                  <div className="flex flex-wrap gap-1">
+                                    {tagDiff.removed.map((tag, i) => (
+                                      <span
+                                        key={i}
+                                        className="text-xs px-1.5 py-0.5 bg-red-100 text-red-700 rounded line-through"
+                                      >
+                                        {tag}
+                                      </span>
+                                    ))}
+                                  </div>
                                 </div>
-                              </div>
-                            )}
-                          </div>
-                        )}
-                        
-                        {tagDiff && tagDiff.added.length === 0 && tagDiff.removed.length === 0 && (
-                          <div className="text-xs text-gray-500">Tags: No changes</div>
-                        )}
+                              )}
+                            </div>
+                          )}
+
+                        {tagDiff &&
+                          tagDiff.added.length === 0 &&
+                          tagDiff.removed.length === 0 && (
+                            <div className="text-xs text-gray-500">
+                              Tags: No changes
+                            </div>
+                          )}
                       </div>
                     )}
                   </div>
@@ -281,10 +320,7 @@ const SyncLogViewer: React.FC<SyncLogViewerProps> = ({
                           <span className="text-sm text-gray-700">
                             Restore this version?
                           </span>
-                          <button
-                            onClick={() => handleConfirmRollback(log)}
-                            className="px-3 py-1 text-sm font-medium text-white bg-blue-600 rounded hover:bg-blue-700"
-                          >
+                          <button onClick={() => handleConfirmRollback(log)}>
                             Confirm
                           </button>
                           <button

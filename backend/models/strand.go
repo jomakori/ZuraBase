@@ -22,17 +22,19 @@ type SyncLog struct {
 
 // Strand represents a piece of captured information that has been enriched with AI
 type Strand struct {
-	ID           string    `json:"id" bson:"id"`
-	UserID       string    `json:"user_id" bson:"user_id"`
-	Content      string    `json:"content" bson:"content"`
-	Source       string    `json:"source" bson:"source"` // "whatsapp", "manual", etc.
-	Tags         []string  `json:"tags" bson:"tags"`
-	Summary      string    `json:"summary" bson:"summary"`
-	RelatedIDs   []string  `json:"related_ids" bson:"related_ids"`
-	SyncedWithAI bool      `json:"synced_with_ai" bson:"synced_with_ai"`
-	SyncHistory  []SyncLog `json:"sync_history" bson:"sync_history"`
-	CreatedAt    time.Time `json:"created_at" bson:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at" bson:"updated_at"`
+	ID              string    `json:"id" bson:"id"`
+	UserID          string    `json:"user_id" bson:"user_id"`
+	Content         string    `json:"content" bson:"content"`
+	Source          string    `json:"source" bson:"source"` // "whatsapp", "manual", etc.
+	Tags            []string  `json:"tags" bson:"tags"`
+	Summary         string    `json:"summary" bson:"summary"`
+	RelatedIDs      []string  `json:"related_ids" bson:"related_ids"`
+	SyncedWithAI    bool      `json:"synced_with_ai" bson:"synced_with_ai"`
+	AIStatus        string    `json:"ai_status" bson:"ai_status"` // "idle", "processing", "completed", "failed"
+	AIFailureReason string    `json:"ai_failure_reason,omitempty" bson:"ai_failure_reason,omitempty"`
+	SyncHistory     []SyncLog `json:"sync_history" bson:"sync_history"`
+	CreatedAt       time.Time `json:"created_at" bson:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at" bson:"updated_at"`
 }
 
 var strandCollection *mongo.Collection

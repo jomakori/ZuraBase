@@ -1,17 +1,12 @@
 import "prosemirror-view/style/prosemirror.css";
+// Import router flags early so they're set before any react-router-dom code runs
+import "./react-router-flags";
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./components/App";
 import { AuthProvider } from "./auth/AuthContext";
 import ErrorBoundary from "./components/ErrorBoundary";
 import "./index.css";
-
-// Apply React Router future settings to silence v7 warnings pre-emptively
-(window as any).__REACT_ROUTER_FUTURE_FLAGS__ = {
-  v7_startTransition: true,
-  v7_relativeSplatPath: true,
-  v7_fetcherPersist: true,
-};
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>

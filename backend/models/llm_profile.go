@@ -72,20 +72,15 @@ func InitializeLLMProfiles(client *mongo.Client, dbName string) error {
 	// Initialize encryption key from environment variable
 	keyStr := os.Getenv("LLM_ENCRYPTION_KEY")
 	if keyStr == "" {
-		log.Printf("Warning: LLM_ENCRYPTION_KEY not set, generating a random key")
-		// Generate a random key if not provided
-		encryptionKey = make([]byte, 32) // AES-256 requires 32 bytes
-		if _, err := rand.Read(encryptionKey); err != nil {
-			return fmt.Errorf("failed to generate encryption key: %w", err)
-		}
-	} else {
-		// Use the provided key (must be 32 bytes for AES-256)
-		decoded, err := base64.StdEncoding.DecodeString(keyStr)
-		if err != nil || len(decoded) != 32 {
-			return fmt.Errorf("invalid LLM_ENCRYPTION_KEY: must be a base64-encoded 32-byte key")
-		}
-		encryptionKey = decoded
+		return fmt.Errorf("LLM_ENCRYPTION_KEY environment variable is not set. Please set it to a base64-encoded 32-byte key.")
 	}
+
+	// Use the provided key (must be 32 bytes for AES-256)
+	decoded, err := base64.StdEncoding.DecodeString(keyStr)
+	if err != nil || len(decoded) != 32 {
+		return fmt.Errorf("invalid LLM_ENCRYPTION_KEY: must be a base64-encoded 32-byte key. Error: %w", err)
+	}
+	encryptionKey = decoded
 
 	return nil
 }
@@ -107,33 +102,32 @@ func (p *LLMProfile) ToResponse() *LLMProfileResponse {
 // Encrypt encrypts the API key before saving
 func (p *LLMProfile) Encrypt() error {
 	if p.APIKey == "" {
-		return nil // Nothing to encrypt
+		return fmt.Errorf("API key cannot be empty before encryption")
 	}
 
-	// Create a new AES cipher block
+	if encryptionKey == nil || len(encryptionKey) != 32 {
+		return fmt.Errorf("invalid or missing encryption key environment variable")
+	}
+
 	block, err := aes.NewCipher(encryptionKey)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to create AES block: %w", err)
 	}
 
-	// Create a new GCM cipher
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to create AES-GCM: %w", err)
 	}
 
-	// Create a nonce
 	nonce := make([]byte, gcm.NonceSize())
 	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-		return err
+		return fmt.Errorf("failed to generate nonce: %w", err)
 	}
 
-	// Encrypt the API key
 	ciphertext := gcm.Seal(nonce, nonce, []byte(p.APIKey), nil)
-
-	// Store the encrypted API key as base64
 	p.APIKey = base64.StdEncoding.EncodeToString(ciphertext)
 
+	log.Printf("🔐 Encrypted API key for profile %s at %s | nonceSize=%d | cipherLen=%d", p.ID, p.UpdatedAt.Format(time.RFC3339), len(nonce), len(ciphertext))
 	return nil
 }
 
@@ -143,10 +137,11 @@ func (p *LLMProfile) Decrypt() error {
 		return nil // Nothing to decrypt
 	}
 
-	// Decode the base64 encrypted API key
+	// Attempt to decode the base64 encrypted API key
 	ciphertext, err := base64.StdEncoding.DecodeString(p.APIKey)
 	if err != nil {
-		return err
+		log.Printf("❌ Decryption error for profile %s: invalid base64 data; ensure key was encrypted properly", p.ID)
+		return fmt.Errorf("decryption failed for profile %s: invalid base64 data", p.ID)
 	}
 
 	// Create a new AES cipher block
@@ -177,7 +172,7 @@ func (p *LLMProfile) Decrypt() error {
 
 	// Store the decrypted API key
 	p.APIKey = string(plaintext)
-
+	log.Printf("🔓 Decrypted API key for profile %s successfully | len=%d", p.ID, len(plaintext))
 	return nil
 }
 
@@ -299,12 +294,36 @@ func GetDefaultLLMProfile(ctx context.Context, userID string) (*LLMProfile, erro
 		return nil, fmt.Errorf("failed to retrieve default LLM profile: %w", err)
 	}
 
-	// Decrypt the API key
-	if err := profile.Decrypt(); err != nil {
-		log.Printf("Warning: Failed to decrypt API key for profile %s: %v", profile.ID, err)
-		// Set API key to empty string to indicate it needs to be re-entered
-		profile.APIKey = ""
+	log.Printf("🔍 Raw profile from DB: ID=%s, Name=%s, ServerURL='%s', Model=%s, APIKey(encrypted)=%v chars",
+		profile.ID, profile.Name, profile.ServerURL, profile.Model, len(profile.APIKey))
+
+	// Explicit validation and decryption pipeline
+	if encryptionKey == nil || len(encryptionKey) != 32 {
+		log.Printf("❌ Invalid encryption key — ensure LLM_ENCRYPTION_KEY is 32-byte base64 encoded")
+		return nil, fmt.Errorf("invalid encryption key configuration")
 	}
+
+	// Attempt decryption
+	if err := profile.Decrypt(); err != nil {
+		log.Printf("❌ Failed to decrypt LLM profile API key for user=%s, profile=%s: %v", userID, profile.ID, err)
+		return nil, fmt.Errorf("failed to decrypt API key for default profile: %w", err)
+	}
+
+	log.Printf("🔍 After decryption: ServerURL='%s', APIKey=%v chars", profile.ServerURL, len(profile.APIKey))
+
+	// Validate required fields
+	if profile.ServerURL == "" {
+		log.Printf("❌ Missing ServerURL in LLM profile for user=%s", userID)
+		return nil, fmt.Errorf("missing ServerURL in LLM profile - please update your profile in settings")
+	}
+
+	if profile.APIKey == "" {
+		log.Printf("❌ Missing API key after decryption for user=%s", userID)
+		return nil, fmt.Errorf("missing API key in LLM profile")
+	}
+
+	log.Printf("✅ Loaded and decrypted LLM profile for user=%s | Model=%s | URL=%s | KeyLen=%d",
+		userID, profile.Model, profile.ServerURL, len(profile.APIKey))
 
 	return &profile, nil
 }

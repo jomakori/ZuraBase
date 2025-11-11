@@ -25,6 +25,8 @@ export interface Strand {
   summary: string;
   related_ids: string[];
   synced_with_ai: boolean; // Whether the strand has been processed by AI
+  ai_status?: string; // "idle", "processing", "completed", "failed"
+  ai_failure_reason?: string; // Reason for AI processing failure
   sync_history: SyncLog[];
   created_at: string;
   updated_at: string;

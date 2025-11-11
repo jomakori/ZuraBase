@@ -80,12 +80,10 @@ func InitializeWhatsApp(ctx context.Context) error {
 	whatsappService.AddHandler(func(from, text string) {
 		log.Printf("📩 WhatsApp message from %s: %s", from, text)
 		go func() {
-			aiClient, err := services.NewAIClient()
-			if err != nil {
-				log.Printf("Error creating AI client: %v", err)
-				return
-			}
-			tagService := services.NewTagService(aiClient)
+			// Create a background context for the WhatsApp processing
+			bgCtx := context.Background()
+			
+			// Create strand
 			strand := &models.Strand{
 				ID:        uuid.New().String(),
 				UserID:    from,
@@ -94,15 +92,26 @@ func InitializeWhatsApp(ctx context.Context) error {
 				Tags:      []string{"whatsapp", "text"},
 				CreatedAt: time.Now(),
 				UpdatedAt: time.Now(),
+				SyncedWithAI: false,
 			}
-			tags, summary, err := tagService.ExtractTagsFromContent(ctx, text, "whatsapp")
-			if err == nil {
-				strand.Tags = tagService.MergeTags(strand.Tags, tags)
-				strand.Summary = summary
-			}
-			if _, err := models.SaveStrand(ctx, strand); err != nil {
+			
+			// Generate basic summary
+			strand.Summary = generateBasicSummary(text)
+			
+			// Save the strand immediately
+			savedStrand, err := models.SaveStrand(bgCtx, strand)
+			if err != nil {
 				log.Printf("Error saving WhatsApp strand: %v", err)
+				return
 			}
+			
+			// Enrich with AI in background
+			go func() {
+				result := enrichStrandWithAI(bgCtx, savedStrand)
+				if !result.Success {
+					log.Printf("Background AI enrichment failed for WhatsApp strand %s: %s", result.StrandID, result.Error)
+				}
+			}()
 		}()
 	})
 
@@ -144,14 +153,6 @@ func handleWhatsAppVerification(w http.ResponseWriter, r *http.Request) {
 
 // processWhatsAppMessage processes a message from WhatsApp and creates a strand
 func processWhatsAppMessage(ctx context.Context, message WhatsAppMessage) {
-	// Initialize services
-	aiClient, err := services.NewAIClient()
-	if err != nil {
-		log.Printf("Error creating AI client: %v", err)
-		return
-	}
-	tagService := services.NewTagService(aiClient)
-
 	// Process each message in the webhook
 	for _, entry := range message.Entry {
 		for _, change := range entry.Changes {
@@ -192,26 +193,30 @@ func processWhatsAppMessage(ctx context.Context, message WhatsAppMessage) {
 					Tags:      []string{"whatsapp", mediaType},
 					CreatedAt: time.Now(),
 					UpdatedAt: time.Now(),
+					SyncedWithAI: false,
 				}
 
-				// Enrich with AI if it's text content
-				if mediaType == "text" {
-					tags, summary, err := tagService.ExtractTagsFromContent(ctx, content, "whatsapp")
-					if err != nil {
-						log.Printf("Error extracting tags: %v", err)
-					} else {
-						// Merge AI-generated tags with default tags
-						strand.Tags = tagService.MergeTags(strand.Tags, tags)
-						strand.Summary = summary
-					}
-				}
+				// Generate basic summary
+				strand.Summary = generateBasicSummary(content)
 
-				// Save the strand
-				_, err := models.SaveStrand(ctx, strand)
+				// Save the strand immediately
+				savedStrand, err := models.SaveStrand(ctx, strand)
 				if err != nil {
 					log.Printf("Error saving strand: %v", err)
-				} else {
-					log.Printf("Successfully created strand from WhatsApp message: %s", strand.ID)
+					continue
+				}
+
+				log.Printf("Successfully created strand from WhatsApp message: %s", strand.ID)
+
+				// Enrich with AI in background if it's text content
+				if mediaType == "text" {
+					go func() {
+						bgCtx := context.Background()
+						result := enrichStrandWithAI(bgCtx, savedStrand)
+						if !result.Success {
+							log.Printf("Background AI enrichment failed for WhatsApp strand %s: %s", result.StrandID, result.Error)
+						}
+					}()
 				}
 			}
 		}

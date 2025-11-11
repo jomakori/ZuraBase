@@ -116,9 +116,7 @@ const AIProfilesSettings: React.FC = () => {
                 <p className="text-sm text-gray-500">
                   {profile.server_url || "Default OpenAI Server"}
                 </p>
-                <p className="text-xs text-gray-400">
-                  Model: {profile.model || "gpt-4o"}
-                </p>
+                <p className="text-xs text-gray-400">Model: {profile.model}</p>
               </div>
               <div className="flex items-center space-x-2">
                 {!profile.is_default && (

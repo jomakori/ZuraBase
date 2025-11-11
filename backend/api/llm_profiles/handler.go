@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"net/url" // Add net/url import
 	"zurabase/models"
 
 	"github.com/google/uuid"
@@ -149,53 +150,28 @@ func HandleCreateLLMProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate request
-	if req.Name == "" {
+	// Validate request with comprehensive checks
+	if validationErrors := validateLLMProfileRequest(req); len(validationErrors) > 0 {
 		response := LLMProfileResponse{
-			Error: "Profile name is required",
+			Error: strings.Join(validationErrors, "; "),
 		}
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(response)
 		return
 	}
 
-	if len(req.Name) > 100 {
-		response := LLMProfileResponse{
-			Error: "Profile name must be less than 100 characters",
-		}
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(response)
-		return
-	}
+	// Normalize server URL to prevent endpoint duplication
+	normalizedServerURL := normalizeServerURL(req.ServerURL)
 
-	// API key is required
-	if req.APIKey == "" {
-		response := LLMProfileResponse{
-			Error: "API key is required",
-		}
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(response)
-		return
-	}
-
-	// Validate server URL format if provided
-	if req.ServerURL != "" {
-		if !isValidURL(req.ServerURL) {
-			response := LLMProfileResponse{
-				Error: "Invalid server URL format. Must be a valid HTTP/HTTPS URL",
-			}
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(response)
-			return
-		}
-	}
+	log.Printf("📝 Creating LLM profile: Name=%s, ServerURL=%s, Model=%s, IsDefault=%v",
+		req.Name, normalizedServerURL, req.Model, req.IsDefault)
 
 	// Create a new profile
 	profile := &models.LLMProfile{
 		ID:        uuid.New().String(),
 		UserID:    userID,
 		Name:      req.Name,
-		ServerURL: req.ServerURL,
+		ServerURL: normalizedServerURL,
 		APIKey:    req.APIKey,
 		Model:     req.Model,
 		IsDefault: req.IsDefault,
@@ -277,36 +253,27 @@ func HandleUpdateLLMProfile(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 
-	// Validate request
-	if req.Name != "" && len(req.Name) > 100 {
+	// Validate request with comprehensive checks
+	if validationErrors := validateLLMProfileRequest(req); len(validationErrors) > 0 {
 		response := LLMProfileResponse{
-			Error: "Profile name must be less than 100 characters",
+			Error: strings.Join(validationErrors, "; "),
 		}
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(response)
 		return
 	}
 
-	// Validate server URL format if provided
-	if req.ServerURL != "" {
-		if !isValidURL(req.ServerURL) {
-			response := LLMProfileResponse{
-				Error: "Invalid server URL format. Must be a valid HTTP/HTTPS URL",
-			}
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(response)
-			return
-		}
-	}
+	log.Printf("📝 Updating LLM profile %s: Name=%s, ServerURL=%s, Model=%s, IsDefault=%v",
+		id, req.Name, req.ServerURL, req.Model, req.IsDefault)
 
 	// Update fields
 	if req.Name != "" {
 		profile.Name = req.Name
 	}
 
-	// Only update ServerURL if provided
+	// Only update ServerURL if provided - normalize to prevent endpoint duplication
 	if req.ServerURL != "" || req.ServerURL == "" { // Allow explicitly setting to empty string
-		profile.ServerURL = req.ServerURL
+		profile.ServerURL = normalizeServerURL(req.ServerURL)
 	}
 
 	// Only update APIKey if provided
@@ -314,15 +281,15 @@ func HandleUpdateLLMProfile(w http.ResponseWriter, r *http.Request, id string) {
 		profile.APIKey = req.APIKey
 	}
 
-	// Update model if provided
-	if req.Model != "" {
-		profile.Model = req.Model
-	}
+	// Update model - always update since it's required
+	profile.Model = req.Model
 
 	// Update IsDefault
 	profile.IsDefault = req.IsDefault
 
 	profile.UpdatedAt = time.Now()
+
+	log.Printf("✅ Profile %s updated with Model=%s", id, profile.Model)
 
 	// Save the updated profile
 	updatedProfile, err := models.SaveLLMProfile(ctx, profile)
@@ -436,6 +403,25 @@ func HandleSetDefaultLLMProfile(w http.ResponseWriter, r *http.Request, id strin
 	json.NewEncoder(w).Encode(response)
 }
 
+// ConnectionTestResponse represents the response for connection tests
+type ConnectionTestResponse struct {
+	Success bool   `json:"success"`
+	Message string `json:"message,omitempty"`
+}
+
+// respondWithConnectionTest sends a standardized connection test response
+func respondWithConnectionTest(w http.ResponseWriter, success bool, message string) {
+	response := ConnectionTestResponse{
+		Success: success,
+		Message: message,
+	}
+
+	if !success {
+		w.WriteHeader(http.StatusBadRequest)
+	}
+	json.NewEncoder(w).Encode(response)
+}
+
 // HandleTestLLMConnection handles POST /api/llm-profiles/test-connection
 func HandleTestLLMConnection(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -456,28 +442,18 @@ func HandleTestLLMConnection(w http.ResponseWriter, r *http.Request) {
 	var req LLMProfileRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		log.Printf("Error decoding request body: %v", err)
-		response := map[string]interface{}{
-			"success": false,
-			"error":   "Invalid request body: " + err.Error(),
-		}
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(response)
+		respondWithConnectionTest(w, false, "Invalid request body: "+err.Error())
 		return
 	}
 
 	// Validate request
 	if req.APIKey == "" {
-		response := map[string]interface{}{
-			"success": false,
-			"error":   "API key is required",
-		}
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(response)
+		respondWithConnectionTest(w, false, "API key is required")
 		return
 	}
 
 	// Determine the server URL to test
-	serverURL := req.ServerURL
+	serverURL := normalizeServerURL(req.ServerURL) // Normalize the incoming URL
 	if serverURL == "" {
 		// Use default OpenAI API endpoint
 		serverURL = "https://api.openai.com"
@@ -485,51 +461,37 @@ func HandleTestLLMConnection(w http.ResponseWriter, r *http.Request) {
 
 	// Test the connection by making a simple API call
 	success, message := testLLMConnection(serverURL, req.APIKey)
-
-	response := map[string]interface{}{
-		"success": success,
-		"message": message,
-	}
-
-	if !success {
-		w.WriteHeader(http.StatusBadRequest)
-	}
-	json.NewEncoder(w).Encode(response)
+	respondWithConnectionTest(w, success, message)
 }
-
-// Correct misplaced code after the last closing brace
-// Ensure file ends cleanly and remove lingering incomplete syntax blocks
 
 // testLLMConnection performs an actual connection test to the LLM server
 func testLLMConnection(serverURL, apiKey string) (bool, string) {
 	log.Printf("[Debug] Testing connectivity - serverURL: '%s'", serverURL)
 
 	if apiKey == "" {
-		return false, "API key required for testing connection"
+		return false, "❌ API key is required for testing connection"
 	}
 
-	// FIX: Ensure proper default URL if empty
 	if serverURL == "" {
-		serverURL = "https://api.openai.com"
-		log.Printf("[Debug] Using default serverURL: %s", serverURL)
+		return false, "❌ Server URL is required for testing connection"
 	}
 
-	// FIX: Ensure proper URL scheme
+	// Validate URL format
 	serverURL = strings.TrimSpace(serverURL)
 	if !strings.HasPrefix(serverURL, "http://") && !strings.HasPrefix(serverURL, "https://") {
-		serverURL = "https://" + strings.TrimPrefix(serverURL, "/")
-		log.Printf("[Debug] Added scheme, serverURL: %s", serverURL)
+		return false, "❌ Server URL must start with http:// or https://"
 	}
 
 	client := &http.Client{Timeout: 15 * time.Second}
-	// FIX: Proper path construction
-	baseURL := strings.TrimSuffix(serverURL, "/")
-	url := fmt.Sprintf("%s/v1/models", baseURL)
-	log.Printf("[Debug] Final URL: %s", url)
 
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+	// Always append /v1/models to the normalized base URL for testing
+	testURL := fmt.Sprintf("%s/v1/models", strings.TrimSuffix(serverURL, "/"))
+
+	log.Printf("[Debug] Testing endpoint: %s", testURL)
+
+	req, err := http.NewRequest(http.MethodGet, testURL, nil)
 	if err != nil {
-		return false, fmt.Sprintf("Failed to create request: %v", err)
+		return false, fmt.Sprintf("❌ Failed to create request: %v", err)
 	}
 
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", apiKey))
@@ -537,19 +499,35 @@ func testLLMConnection(serverURL, apiKey string) (bool, string) {
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return false, fmt.Sprintf("Connection failed: %v", err)
+		return false, fmt.Sprintf("❌ Connection failed - endpoint not reachable: %v", err)
 	}
 	defer resp.Body.Close()
 
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return false, fmt.Sprintf("Failed to read response: %v", err)
+		return false, fmt.Sprintf("❌ Failed to read response: %v", err)
+	}
+
+	// Check for authentication errors
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		return false, fmt.Sprintf("❌ Authentication failed - invalid API key (status %d)", resp.StatusCode)
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return false, fmt.Sprintf("Server returned status %d: %s", resp.StatusCode, string(data))
+		// Try to parse error message
+		var errorResp struct {
+			Error struct {
+				Message string `json:"message"`
+				Type    string `json:"type"`
+			} `json:"error"`
+		}
+		if json.Unmarshal(data, &errorResp) == nil && errorResp.Error.Message != "" {
+			return false, fmt.Sprintf("❌ API Error: %s", errorResp.Error.Message)
+		}
+		return false, fmt.Sprintf("❌ Server returned status %d: %s", resp.StatusCode, string(data))
 	}
 
+	// Parse successful response
 	var jsonResp struct {
 		Object string `json:"object"`
 		Data   []struct {
@@ -559,11 +537,11 @@ func testLLMConnection(serverURL, apiKey string) (bool, string) {
 	if err := json.Unmarshal(data, &jsonResp); err == nil && jsonResp.Object == "list" {
 		count := len(jsonResp.Data)
 		if count > 0 {
-			return true, fmt.Sprintf("Connection successful - %d models available", count)
+			return true, fmt.Sprintf("✅ Connection successful - %d models available", count)
 		}
 	}
 
-	return true, "Connection successful but no models found"
+	return true, "✅ Connection successful"
 }
 
 // HandleTestStoredLLMConnection handles POST /api/llm-profiles/:id/test-stored-connection
@@ -585,12 +563,7 @@ func HandleTestStoredLLMConnection(w http.ResponseWriter, r *http.Request, id st
 	// Validate profile ID
 	if id == "" {
 		log.Printf("Error: Empty profile ID provided for test-stored-connection")
-		response := map[string]interface{}{
-			"success": false,
-			"error":   "Profile ID is required",
-		}
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(response)
+		respondWithConnectionTest(w, false, "Profile ID is required")
 		return
 	}
 
@@ -602,12 +575,8 @@ func HandleTestStoredLLMConnection(w http.ResponseWriter, r *http.Request, id st
 	profile, err := models.GetLLMProfile(ctx, id)
 	if err != nil {
 		log.Printf("Error getting LLM profile: %v", err)
-		response := map[string]interface{}{
-			"success": false,
-			"error":   "Failed to get LLM profile: " + err.Error(),
-		}
 		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(response)
+		respondWithConnectionTest(w, false, "Failed to get LLM profile: "+err.Error())
 		return
 	}
 
@@ -620,28 +589,57 @@ func HandleTestStoredLLMConnection(w http.ResponseWriter, r *http.Request, id st
 	// Check if the API key is available
 	if profile.APIKey == "" {
 		log.Printf("Error: No API key found for profile %s", profile.ID)
-		response := map[string]interface{}{
-			"success": false,
-			"message": "No API key configured for this profile",
-		}
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(response)
+		respondWithConnectionTest(w, false, "No API key configured for this profile")
 		return
 	}
 
 	// Test the connection using the stored API key
 	log.Printf("Testing stored connection for profile %s (user: %s)", profile.ID, userID)
-	success, message := testLLMConnection(profile.ServerURL, profile.APIKey)
+	success, message := testLLMConnection(normalizeServerURL(profile.ServerURL), profile.APIKey) // Normalize here too
+	respondWithConnectionTest(w, success, message)
+}
 
-	response := map[string]interface{}{
-		"success": success,
-		"message": message,
+// validateLLMProfileRequest performs comprehensive validation on LLM profile requests
+func validateLLMProfileRequest(req LLMProfileRequest) []string {
+	var errors []string
+
+	// Validate profile name
+	if req.Name == "" {
+		errors = append(errors, "Profile name is required")
+	} else if len(req.Name) > 100 {
+		errors = append(errors, "Profile name must be less than 100 characters")
+	} else if strings.TrimSpace(req.Name) == "" {
+		errors = append(errors, "Profile name cannot be empty or only whitespace")
 	}
 
-	if !success {
-		w.WriteHeader(http.StatusBadRequest)
+	// Validate API key
+	if req.APIKey == "" {
+		errors = append(errors, "API key is required")
+	} else if len(req.APIKey) < 10 {
+		errors = append(errors, "API key appears to be too short (minimum 10 characters)")
+	} else if strings.TrimSpace(req.APIKey) == "" {
+		errors = append(errors, "API key cannot be empty or only whitespace")
 	}
-	json.NewEncoder(w).Encode(response)
+
+	// Validate server URL
+	if req.ServerURL != "" {
+		if !isValidURL(req.ServerURL) {
+			errors = append(errors, "Invalid server URL format. Must be a valid HTTP/HTTPS URL (e.g., https://api.openai.com)")
+		} else if len(req.ServerURL) > 500 {
+			errors = append(errors, "Server URL must be less than 500 characters")
+		}
+	}
+
+	// Validate model name - REQUIRED for LLM operations
+	if req.Model == "" {
+		errors = append(errors, "Model name is required (e.g., gpt-4, gpt-3.5-turbo, claude-3-opus-20240229)")
+	} else if len(req.Model) > 100 {
+		errors = append(errors, "Model name must be less than 100 characters")
+	} else if strings.TrimSpace(req.Model) == "" {
+		errors = append(errors, "Model name cannot be empty or only whitespace")
+	}
+
+	return errors
 }
 
 // isValidURL validates that a string is a valid HTTP/HTTPS URL
@@ -753,6 +751,7 @@ func HandleListAvailableModels(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "API key is required to fetch models", http.StatusBadRequest)
 		return
 	}
+
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
@@ -776,4 +775,50 @@ func HandleListAvailableModels(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusOK)
 	w.Write(body)
+}
+
+// normalizeServerURL normalizes server URLs to prevent endpoint duplication
+// Removes common API endpoint suffixes to ensure base URLs are stored
+func normalizeServerURL(serverURL string) string {
+	if serverURL == "" {
+		return ""
+	}
+
+	// Trim whitespace and trailing slashes
+	normalized := strings.TrimSpace(serverURL)
+	normalized = strings.TrimSuffix(normalized, "/")
+
+	// Parse the URL to handle different components
+	u, err := url.Parse(normalized)
+	if err != nil {
+		log.Printf("Warning: Failed to parse URL %s for normalization: %v", serverURL, err)
+		return serverURL // Return original if parsing fails
+	}
+
+	// Define common API endpoint paths to remove
+	// These are paths that LangChain-Go might append, so we want the base
+	endpointsToRemove := []string{
+		"/v1/chat/completions",
+		"/v1/models",
+		"/v1/messages",
+		"/api/chat",             // For Ollama
+		"/api/tags",             // For Ollama
+		"/api/v1/langgraph/run", // Specific LangGraph endpoint
+	}
+
+	// Check if the path component ends with any of the known endpoints
+	for _, endpoint := range endpointsToRemove {
+		if strings.HasSuffix(u.Path, endpoint) {
+			u.Path = strings.TrimSuffix(u.Path, endpoint)
+			// Ensure path starts with a slash if it's not empty
+			if u.Path != "" && !strings.HasPrefix(u.Path, "/") {
+				u.Path = "/" + u.Path
+			}
+			break // Only remove one endpoint suffix
+		}
+	}
+
+	// Reconstruct the URL, ensuring no double slashes in the path
+	finalURL := u.Scheme + "://" + u.Host + strings.TrimSuffix(u.Path, "/")
+	return finalURL
 }

@@ -16,55 +16,55 @@ import (
 	"github.com/google/uuid"
 )
 
-var (
-	aiClient   *services.AIClient
-	tagService *services.TagService
-)
-
 // Initialize sets up the services needed for the strands package
 func Initialize() error {
-	var err error
-	// Initialize with empty user ID for global operations
-	aiClient, err = services.NewAIClient()
-	if err != nil {
-		log.Printf("Warning: AI client initialization failed: %v. AI features will use user-specific LLM profiles.", err)
-		// Don't create a global AI client - rely on user-specific LLM profiles
-		aiClient = nil
-		tagService = nil
-	} else {
-		log.Printf("✅ AI client initialized successfully")
-		tagService = services.NewTagService(aiClient)
-		// AI service is available, sync any unsynced strands
-		go autoSyncUnsyncedStrands()
-	}
-
+	log.Printf("✅ Strands package initialized. AI client will be created per user.")
+	// AI service is available, sync any unsynced strands
+	go autoSyncUnsyncedStrands()
 	return nil
 }
 
-// getAIClientForUser creates or updates an AI client for a specific user
-// This allows using user-specific LLM profiles
-func getAIClientForUser(ctx context.Context, userID string) (*services.AIClient, error) {
-	// Try to create a user-specific AI client from their LLM profile
-	userAIClient, err := services.NewAIClientWithUserID(userID)
+// getAIClientForUser creates an LLMClient for a specific user using their default LLM profile.
+// It strictly attempts to create a LangChainClient. If the profile is invalid or
+// LangChainClient creation fails, it returns an error.
+func getAIClientForUser(ctx context.Context, userID string) (services.LLMClient, error) {
+	log.Printf("🔍 getAIClientForUser: Starting LLM client resolution for user %s", userID)
+
+	// Get user's default LLM profile
+	profile, err := models.GetDefaultLLMProfile(ctx, userID)
 	if err != nil {
-		// If no user-specific profile exists, try to fall back to global client
-		if aiClient != nil {
-			log.Printf("Warning: Failed to create user-specific AI client for user %s: %v. Using global client.", userID, err)
-			return aiClient, nil
-		}
-		// No global client and no user profile - return error
-		return nil, fmt.Errorf("no AI client available: %w", err)
+		log.Printf("❌ getAIClientForUser: Failed to get LLM profile for user %s: %v", userID, err)
+		return nil, fmt.Errorf("failed to get LLM profile: %w", err)
 	}
 
-	return userAIClient, nil
+	if profile == nil {
+		log.Printf("❌ getAIClientForUser: No default LLM profile found for user %s", userID)
+		return nil, fmt.Errorf("no default LLM profile found for user %s")
+	}
+
+	log.Printf("🔍 getAIClientForUser: Retrieved profile '%s' (ID: %s) for user %s", profile.Name, profile.ID, userID)
+	log.Printf("🔍 getAIClientForUser: Profile validation - ServerURL: %s, APIKey present: %v", profile.ServerURL, profile.APIKey != "")
+
+	if profile.ServerURL == "" || profile.APIKey == "" {
+		log.Printf("❌ getAIClientForUser: Invalid LLM profile configuration for user %s - ServerURL: %s, APIKey present: %v",
+			userID, profile.ServerURL, profile.APIKey != "")
+		return nil, fmt.Errorf("invalid LLM profile configuration for user %s", userID)
+	}
+
+	// Attempt to create a LangChain client
+	langChainClient, err := services.NewLangChainClient(profile)
+	if err != nil {
+		log.Printf("❌ getAIClientForUser: Failed to create LangChain client for user %s: %v", userID, err)
+		return nil, fmt.Errorf("failed to create LangChain client: %w", err)
+	}
+
+	log.Printf("✅ getAIClientForUser: Successfully created LangChain client for user %s", userID)
+	return langChainClient, nil
 }
 
 // autoSyncUnsyncedStrands automatically syncs strands that haven't been synced with AI
 func autoSyncUnsyncedStrands() {
-	if tagService == nil {
-		log.Println("⏭️ Skipping auto-sync: tagService not initialized")
-		return
-	}
+	log.Println("Starting simplified AI auto-sync for unsynced strands...")
 
 	ctx := context.Background()
 	strands, err := models.GetUnsyncedStrands(ctx)
@@ -213,25 +213,23 @@ func HandleCreateStrand(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Try to enrich with AI in the background if available
+	// Try to enrich with AI in the background
 	// This doesn't block the response to the user
-	if tagService != nil {
-		// Create a new background context that won't be canceled when the request ends
-		bgCtx := context.Background()
+	// Create a new background context that won't be canceled when the request ends
+	bgCtx := context.Background()
 
-		// Use a separate goroutine with panic recovery to prevent crashes
-		go func() {
-			defer func() {
-				if r := recover(); r != nil {
-					log.Printf("RECOVERED from panic in enrichStrandWithAI: %v", r)
-				}
-			}()
-			result := enrichStrandWithAI(bgCtx, savedStrand)
-			if !result.Success {
-				log.Printf("Background enrichment failed for strand %s: %s", result.StrandID, result.Error)
+	// Use a separate goroutine with panic recovery to prevent crashes
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("RECOVERED from panic in enrichStrandWithAI: %v", r)
 			}
 		}()
-	}
+		result := enrichStrandWithAI(bgCtx, savedStrand)
+		if !result.Success {
+			log.Printf("Background enrichment failed for strand %s: %s", result.StrandID, result.Error)
+		}
+	}()
 
 	// Return the saved strand immediately
 	response := StrandResponse{
@@ -246,27 +244,47 @@ func HandleCreateStrand(w http.ResponseWriter, r *http.Request) {
 // enrichStrandWithAI processes a strand with AI in the background
 // This is called asynchronously to avoid blocking the user response
 func enrichStrandWithAI(ctx context.Context, strand *models.Strand) EnrichmentResult {
+	log.Printf("🔍 enrichStrandWithAI: Starting AI enrichment for strand %s (user: %s)", strand.ID, strand.UserID)
+
 	userAIClient, err := getAIClientForUser(ctx, strand.UserID)
 	if err != nil {
-		log.Printf("⚠️ AI client unavailable for strand %s: %v", strand.ID, err)
+		log.Printf("❌ enrichStrandWithAI: AI client unavailable for strand %s: %v", strand.ID, err)
 		strand.SyncedWithAI = false
+		strand.AIStatus = "failed"
+		strand.AIFailureReason = err.Error()
 		models.SaveStrand(ctx, strand)
 		return EnrichmentResult{StrandID: strand.ID, Success: false, Error: err.Error()}
 	}
+
+	log.Printf("✅ enrichStrandWithAI: AI client successfully obtained for strand %s", strand.ID)
 
 	userTagService := services.NewTagService(userAIClient)
 	if userTagService == nil {
 		log.Printf("⚠️ Failed to create tag service for strand %s", strand.ID)
 		strand.SyncedWithAI = false
+		strand.AIStatus = "failed"
+		strand.AIFailureReason = "Failed to create tag service"
 		models.SaveStrand(ctx, strand)
 		return EnrichmentResult{StrandID: strand.ID, Success: false, Error: "Failed to create tag service"}
 	}
 
-	// Analyze content directly and persist updates without intermediate service layering
-	resp, err := userAIClient.AnalyzeContent(ctx, strand.Content, strand.Source)
+	// Set AI status to processing before starting AI analysis
+	strand.AIStatus = "processing"
+	models.SaveStrand(ctx, strand)
+
+	// Analyze content with timeout to prevent hanging
+	aiCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	resp, err := userAIClient.AnalyzeContent(aiCtx, &services.AnalysisRequest{
+		Content: strand.Content,
+		Source:  strand.Source,
+	})
 	if err != nil {
 		log.Printf("❌ AI analysis failed for strand %s: %v", strand.ID, err)
 		strand.SyncedWithAI = false
+		strand.AIStatus = "failed"
+		strand.AIFailureReason = err.Error()
 		models.SaveStrand(ctx, strand)
 		return EnrichmentResult{StrandID: strand.ID, Success: false, Error: err.Error()}
 	}
@@ -274,15 +292,38 @@ func enrichStrandWithAI(ctx context.Context, strand *models.Strand) EnrichmentRe
 	if resp == nil {
 		log.Printf("❌ AI returned nil response for strand %s", strand.ID)
 		strand.SyncedWithAI = false
+		strand.AIStatus = "failed"
+		strand.AIFailureReason = "AI response nil"
 		models.SaveStrand(ctx, strand)
 		return EnrichmentResult{StrandID: strand.ID, Success: false, Error: "AI response nil"}
 	}
+
+	// Debug logging for AI response
+	log.Printf("✅ AI analysis successful for strand %s: %d tags, summary: %s",
+		strand.ID, len(resp.Tags), resp.Summary)
 
 	// Apply enrichment directly
 	strand.Tags = resp.Tags
 	strand.Summary = resp.Summary
 	strand.SyncedWithAI = true
+	strand.AIStatus = "completed"
 	strand.UpdatedAt = time.Now()
+
+	// Add sync log entry for frontend detection
+	syncLog := models.SyncLog{
+		Timestamp:  time.Now(),
+		Summary:    resp.Summary,
+		Tags:       resp.Tags,
+		SyncedByAI: true,
+		Notes:      "Automatic AI enrichment",
+	}
+
+	// Initialize sync history if nil
+	if strand.SyncHistory == nil {
+		strand.SyncHistory = []models.SyncLog{}
+	}
+	strand.SyncHistory = append(strand.SyncHistory, syncLog)
+
 	models.SaveStrand(ctx, strand)
 	log.Printf("✅ Strand %s successfully synced with AI at %s", strand.ID, strand.UpdatedAt.Format(time.RFC3339))
 
@@ -541,25 +582,20 @@ func HandleUpdateStrand(w http.ResponseWriter, r *http.Request, id string) {
 
 	// Update tags if provided
 	if len(req.Tags) > 0 {
-		if tagService != nil {
-			// Use tag service to normalize tags and ensure they are unique
-			strand.Tags = tagService.MergeTags([]string{}, req.Tags)
-		} else {
-			// Normalize tags manually
-			normalizedTags := []string{}
-			seen := make(map[string]struct{})
-			for _, tag := range req.Tags {
-				tag = strings.ToLower(strings.TrimSpace(tag))
-				if tag == "" || tag == "manual" {
-					continue
-				}
-				if _, exists := seen[tag]; !exists {
-					normalizedTags = append(normalizedTags, tag)
-					seen[tag] = struct{}{}
-				}
+		// Normalize tags manually
+		normalizedTags := []string{}
+		seen := make(map[string]struct{})
+		for _, tag := range req.Tags {
+			tag = strings.ToLower(strings.TrimSpace(tag))
+			if tag == "" || tag == "manual" {
+				continue
 			}
-			strand.Tags = normalizedTags
+			if _, exists := seen[tag]; !exists {
+				normalizedTags = append(normalizedTags, tag)
+				seen[tag] = struct{}{}
+			}
 		}
+		strand.Tags = normalizedTags
 	}
 
 	// Mark for AI reprocessing if content changed
@@ -582,7 +618,7 @@ func HandleUpdateStrand(w http.ResponseWriter, r *http.Request, id string) {
 	}
 
 	// Try to enrich with AI in the background if content changed
-	if contentChanged && tagService != nil {
+	if contentChanged {
 		// Create a new background context that won't be canceled when the request ends
 		bgCtx := context.Background()
 
@@ -678,6 +714,8 @@ func HandleGetTags(w http.ResponseWriter, r *http.Request) {
 
 // HandleSyncStrand handles POST /strands/:id/sync
 func HandleSyncStrand(w http.ResponseWriter, r *http.Request, id string) {
+	log.Printf("🔍 HandleSyncStrand: Starting sync for strand %s", id)
+
 	if r.Method != http.MethodPost {
 		http.Error(w, `{"error": "method not allowed"}`, http.StatusMethodNotAllowed)
 		return
@@ -688,22 +726,29 @@ func HandleSyncStrand(w http.ResponseWriter, r *http.Request, id string) {
 	// Get user ID from context (set by auth middleware)
 	userID, _ := r.Context().Value("user_id").(string)
 	if userID == "" {
+		log.Printf("❌ HandleSyncStrand: No user ID found in context for strand %s", id)
 		http.Error(w, `{"error": "unauthorized"}`, http.StatusUnauthorized)
 		return
 	}
 
+	log.Printf("🔍 HandleSyncStrand: Processing sync for strand %s (user: %s)", id, userID)
+
 	// Get the strand
 	strand, err := models.GetStrand(r.Context(), id)
 	if err != nil {
+		log.Printf("❌ HandleSyncStrand: Strand %s not found: %v", id, err)
 		http.Error(w, `{"error": "strand not found"}`, http.StatusNotFound)
 		return
 	}
 
 	// Verify ownership
 	if strand.UserID != userID {
+		log.Printf("❌ HandleSyncStrand: Strand %s does not belong to user %s", id, userID)
 		http.Error(w, `{"error": "unauthorized"}`, http.StatusUnauthorized)
 		return
 	}
+
+	log.Printf("🔍 HandleSyncStrand: Strand %s found and ownership verified", id)
 
 	// Mark as unsynced to force re-processing
 	strand.SyncedWithAI = false
@@ -713,15 +758,16 @@ func HandleSyncStrand(w http.ResponseWriter, r *http.Request, id string) {
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
-				log.Printf("RECOVERED from panic in HandleSyncStrand enrichment: %v", r)
+				log.Printf("❌ RECOVERED from panic in HandleSyncStrand enrichment: %v", r)
 			}
 		}()
 
+		log.Printf("🔄 HandleSyncStrand: Starting background enrichment for strand %s", id)
 		result := enrichStrandWithAI(bgCtx, strand)
 		if !result.Success {
-			log.Printf("Sync enrichment failed for strand %s: %s", result.StrandID, result.Error)
+			log.Printf("❌ HandleSyncStrand: Sync enrichment failed for strand %s: %s", result.StrandID, result.Error)
 		} else {
-			log.Printf("Sync completed successfully for strand %s", result.StrandID)
+			log.Printf("✅ HandleSyncStrand: Sync completed successfully for strand %s", result.StrandID)
 		}
 	}()
 
@@ -732,8 +778,11 @@ func HandleSyncStrand(w http.ResponseWriter, r *http.Request, id string) {
 	}
 	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(response); err != nil {
+		log.Printf("❌ HandleSyncStrand: Error encoding response for strand %s: %v", id, err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
+
+	log.Printf("✅ HandleSyncStrand: Sync initiated successfully for strand %s", id)
 }
 
 // HandleSyncStrandsWithAI handles POST /strands/sync

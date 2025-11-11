@@ -23,8 +23,16 @@ export interface SyncProgress {
   status: "syncing" | "completed" | "error" | "cancelled";
   message?: string;
   currentOperation?: string;
-  aiSteps?: AIStep[]; // Detailed AI operation steps
-  thinkingMessage?: string; // Current AI thinking/processing message
+  aiSteps?: AIStep[]; // Detailed AI operation steps for the current item
+  thinkingMessage?: string; // Current AI thinking/processing message for the current item
+  strandProgress?: {
+    strandId: string;
+    strandTitle: string;
+    status: "pending" | "active" | "completed" | "error" | "cancelled";
+    message?: string;
+    aiSteps?: AIStep[]; // AI steps for this specific strand
+    thinkingMessage?: string; // Thinking message for this specific strand
+  }[]; // Progress for individual strands in multi-sync
 }
 
 interface SyncProgressModalProps {
@@ -98,7 +106,7 @@ const SyncProgressModal: React.FC<SyncProgressModalProps> = ({
 
         {/* Content */}
         <div className="p-6 space-y-4 max-h-[60vh] overflow-y-auto">
-          {/* Progress Bar */}
+          {/* Overall Progress Bar */}
           <div>
             <div className="flex justify-between text-sm text-gray-600 mb-2">
               <span>
@@ -122,91 +130,115 @@ const SyncProgressModal: React.FC<SyncProgressModalProps> = ({
             </div>
           </div>
 
-          {/* Current Item */}
-          {isSyncing && progress.currentItem && (
-            <div className="bg-gray-50 p-3 rounded-md border border-gray-200">
-              <div className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">
-                Current Strand
+          {/* Multi-strand Progress View */}
+          {progress.strandProgress && progress.strandProgress.length > 1 && (
+            <div className="space-y-3">
+              <div className="text-xs font-medium text-gray-500 uppercase tracking-wide">
+                Individual Strand Progress
               </div>
-              <div className="text-sm text-gray-800 font-medium">
-                {progress.currentItem}
-              </div>
-            </div>
-          )}
-
-          {/* AI Operation Steps - ChatGPT-like thinking display */}
-          {isSyncing && progress.aiSteps && progress.aiSteps.length > 0 && (
-            <div className="space-y-2">
-              <div className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">
-                AI Processing Steps
-              </div>
-              {progress.aiSteps.map((step) => (
+              {progress.strandProgress.map((strand) => (
                 <div
-                  key={step.id}
-                  className={`flex items-start gap-3 p-3 rounded-md transition-all ${
-                    step.status === "active"
-                      ? "bg-blue-50 border border-blue-200"
-                      : step.status === "completed"
-                      ? "bg-green-50 border border-green-200"
-                      : step.status === "error"
-                      ? "bg-red-50 border border-red-200"
-                      : "bg-gray-50 border border-gray-200"
+                  key={strand.strandId}
+                  className={`flex items-center gap-3 p-3 rounded-md border transition-all ${
+                    strand.status === "active"
+                      ? "bg-blue-50 border-blue-200"
+                      : strand.status === "completed"
+                      ? "bg-green-50 border-green-200"
+                      : strand.status === "error"
+                      ? "bg-red-50 border-red-200"
+                      : "bg-gray-50 border-gray-200"
                   }`}
                 >
-                  <div className="flex-shrink-0 mt-0.5">
-                    {step.status === "active" && (
+                  <div className="flex-shrink-0">
+                    {strand.status === "active" && (
                       <div className="h-4 w-4 animate-spin rounded-full border-2 border-solid border-blue-600 border-r-transparent"></div>
                     )}
-                    {step.status === "completed" && (
+                    {strand.status === "completed" && (
                       <CheckCircle
                         size={16}
                         className="text-green-600"
                         weight="fill"
                       />
                     )}
-                    {step.status === "error" && (
+                    {strand.status === "error" && (
                       <XCircle
                         size={16}
                         className="text-red-600"
                         weight="fill"
                       />
                     )}
-                    {step.status === "pending" && (
+                    {strand.status === "pending" && (
                       <div className="h-4 w-4 rounded-full border-2 border-gray-300"></div>
+                    )}
+                    {strand.status === "cancelled" && (
+                      <Warning
+                        size={16}
+                        className="text-yellow-600"
+                        weight="fill"
+                      />
                     )}
                   </div>
                   <div className="flex-1 min-w-0">
                     <div
                       className={`text-sm font-medium ${
-                        step.status === "active"
+                        strand.status === "active"
                           ? "text-blue-900"
-                          : step.status === "completed"
+                          : strand.status === "completed"
                           ? "text-green-900"
-                          : step.status === "error"
+                          : strand.status === "error"
                           ? "text-red-900"
                           : "text-gray-600"
                       }`}
                     >
-                      {step.label}
+                      {strand.strandTitle}
                     </div>
-                    {step.details && (
+                    {strand.message && (
                       <div className="text-xs text-gray-600 mt-1">
-                        {step.details}
+                        {strand.message}
                       </div>
                     )}
-                    {step.status === "active" && (
-                      <div className="flex items-center gap-1 mt-1">
-                        <div className="flex gap-1">
-                          <div className="w-1.5 h-1.5 bg-blue-600 rounded-full animate-bounce"></div>
-                          <div
-                            className="w-1.5 h-1.5 bg-blue-600 rounded-full animate-bounce"
-                            style={{ animationDelay: "0.1s" }}
-                          ></div>
-                          <div
-                            className="w-1.5 h-1.5 bg-blue-600 rounded-full animate-bounce"
-                            style={{ animationDelay: "0.2s" }}
-                          ></div>
+                    {/* Nested AI Steps for the active strand in multi-sync */}
+                    {strand.status === "active" &&
+                      strand.aiSteps &&
+                      strand.aiSteps.length > 0 && (
+                        <div className="mt-3 space-y-2 pl-4 border-l border-gray-200">
+                          {strand.aiSteps.map((step) => (
+                            <div
+                              key={step.id}
+                              className="flex items-start gap-2"
+                            >
+                              <div className="flex-shrink-0 mt-0.5">
+                                {step.status === "active" && (
+                                  <div className="h-3 w-3 animate-spin rounded-full border border-solid border-blue-500 border-r-transparent"></div>
+                                )}
+                                {step.status === "completed" && (
+                                  <CheckCircle
+                                    size={12}
+                                    className="text-green-500"
+                                    weight="fill"
+                                  />
+                                )}
+                                {step.status === "error" && (
+                                  <XCircle
+                                    size={12}
+                                    className="text-red-500"
+                                    weight="fill"
+                                  />
+                                )}
+                                {step.status === "pending" && (
+                                  <div className="h-3 w-3 rounded-full border border-gray-300"></div>
+                                )}
+                              </div>
+                              <div className="flex-1 text-xs text-gray-700">
+                                {step.label}
+                              </div>
+                            </div>
+                          ))}
                         </div>
+                      )}
+                    {strand.status === "active" && strand.thinkingMessage && (
+                      <div className="mt-2 text-xs italic text-blue-700">
+                        AI Thinking: {strand.thinkingMessage}
                       </div>
                     )}
                   </div>
@@ -215,8 +247,92 @@ const SyncProgressModal: React.FC<SyncProgressModalProps> = ({
             </div>
           )}
 
+          {/* Single Strand AI Operation Steps - ChatGPT-like thinking display */}
+          {progress.total === 1 &&
+            isSyncing &&
+            progress.aiSteps &&
+            progress.aiSteps.length > 0 && (
+              <div className="space-y-2">
+                <div className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">
+                  AI Processing Steps
+                </div>
+                {progress.aiSteps.map((step) => (
+                  <div
+                    key={step.id}
+                    className={`flex items-start gap-3 p-3 rounded-md transition-all ${
+                      step.status === "active"
+                        ? "bg-blue-50 border border-blue-200"
+                        : step.status === "completed"
+                        ? "bg-green-50 border border-green-200"
+                        : step.status === "error"
+                        ? "bg-red-50 border border-red-200"
+                        : "bg-gray-50 border border-gray-200"
+                    }`}
+                  >
+                    <div className="flex-shrink-0 mt-0.5">
+                      {step.status === "active" && (
+                        <div className="h-4 w-4 animate-spin rounded-full border-2 border-solid border-blue-600 border-r-transparent"></div>
+                      )}
+                      {step.status === "completed" && (
+                        <CheckCircle
+                          size={16}
+                          className="text-green-600"
+                          weight="fill"
+                        />
+                      )}
+                      {step.status === "error" && (
+                        <XCircle
+                          size={16}
+                          className="text-red-600"
+                          weight="fill"
+                        />
+                      )}
+                      {step.status === "pending" && (
+                        <div className="h-4 w-4 rounded-full border-2 border-gray-300"></div>
+                      )}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div
+                        className={`text-sm font-medium ${
+                          step.status === "active"
+                            ? "text-blue-900"
+                            : step.status === "completed"
+                            ? "text-green-900"
+                            : step.status === "error"
+                            ? "text-red-900"
+                            : "text-gray-600"
+                        }`}
+                      >
+                        {step.label}
+                      </div>
+                      {step.details && (
+                        <div className="text-xs text-gray-600 mt-1">
+                          {step.details}
+                        </div>
+                      )}
+                      {step.status === "active" && (
+                        <div className="flex items-center gap-1 mt-1">
+                          <div className="flex gap-1">
+                            <div className="w-1.5 h-1.5 bg-blue-600 rounded-full animate-bounce"></div>
+                            <div
+                              className="w-1.5 h-1.5 bg-blue-600 rounded-full animate-bounce"
+                              style={{ animationDelay: "0.1s" }}
+                            ></div>
+                            <div
+                              className="w-1.5 h-1.5 bg-blue-600 rounded-full animate-bounce"
+                              style={{ animationDelay: "0.2s" }}
+                            ></div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
           {/* Thinking Message - Similar to ChatGPT's thinking indicator */}
-          {isSyncing && progress.thinkingMessage && (
+          {progress.total === 1 && isSyncing && progress.thinkingMessage && (
             <div className="bg-gradient-to-r from-blue-50 to-indigo-50 p-4 rounded-md border border-blue-200">
               <div className="flex items-start gap-3">
                 <div className="flex-shrink-0">
@@ -230,6 +346,18 @@ const SyncProgressModal: React.FC<SyncProgressModalProps> = ({
                     {progress.thinkingMessage}
                   </div>
                 </div>
+              </div>
+            </div>
+          )}
+
+          {/* Current Item (for single strand sync) */}
+          {progress.total === 1 && isSyncing && progress.currentItem && (
+            <div className="bg-gray-50 p-3 rounded-md border border-gray-200">
+              <div className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">
+                Current Strand
+              </div>
+              <div className="text-sm text-gray-800 font-medium">
+                {progress.currentItem}
               </div>
             </div>
           )}

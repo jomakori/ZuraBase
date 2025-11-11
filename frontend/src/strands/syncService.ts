@@ -27,8 +27,16 @@ export interface SyncProgress {
   status: "syncing" | "completed" | "error" | "cancelled";
   message?: string;
   currentOperation?: string;
-  aiSteps?: AIStep[];
-  thinkingMessage?: string;
+  aiSteps?: AIStep[]; // Detailed AI operation steps for the current item
+  thinkingMessage?: string; // Current AI thinking/processing message for the current item
+  strandProgress?: {
+    strandId: string;
+    strandTitle: string;
+    status: "pending" | "active" | "completed" | "error" | "cancelled";
+    message?: string;
+    aiSteps?: AIStep[]; // AI steps for this specific strand
+    thinkingMessage?: string; // Thinking message for this specific strand
+  }[]; // Progress for individual strands in multi-sync
 }
 
 export interface SyncOptions {
@@ -51,107 +59,165 @@ export class SyncService {
   private async pollStrandSyncCompletion(
     strandId: string,
     originalStrand: Strand,
-    maxAttempts: number = 40,
+    maxPollingDurationSeconds: number = 300, // 5 minutes max
+    initialDelayMs: number = 1000, // 1 second
+    maxDelayMs: number = 60000, // 1 minute
     signal?: AbortSignal,
     aiSteps?: AIStep[],
     onProgress?: (progress: SyncProgress) => void
-  ): Promise<{ completed: boolean; updatedStrand?: Strand }> {
+  ): Promise<{ completed: boolean; updatedStrand?: Strand; error?: string }> {
     let attempts = 0;
+    let totalElapsedTime = 0;
+    let consecutiveNetworkErrors = 0;
+    let consecutiveAIFailures = 0;
+    const MAX_CONSECUTIVE_NETWORK_ERRORS = 5; // Increased threshold for more resilience
+    const MAX_CONSECUTIVE_AI_FAILURES = 3; // Allow a few retries for AI processing failures
+    const MAX_POLLING_DURATION_SECONDS = 300; // 5 minutes max
 
-    while (attempts < maxAttempts) {
+    while (totalElapsedTime < maxPollingDurationSeconds * 1000) {
       if (signal?.aborted) {
-        return { completed: false };
+        logger.warn(MODULE, `Polling for strand ${strandId} aborted by user.`);
+        return { completed: false, error: "Sync cancelled by user" };
       }
 
       attempts++;
+      const currentDelay = Math.min(
+        maxDelayMs,
+        initialDelayMs * Math.pow(2, attempts - 1) + Math.random() * 500 // Add jitter
+      );
+
       logger.debug(
         MODULE,
-        `Polling for strand ${strandId} sync completion (attempt ${attempts}/${maxAttempts})`
+        `Polling for strand ${strandId} sync completion (attempt ${attempts}, delay ${currentDelay}ms, elapsed ${
+          totalElapsedTime / 1000
+        }s)`
       );
-      await new Promise((resolve) => setTimeout(resolve, 1000));
 
-      // Update AI steps based on polling progress
-      if (aiSteps && onProgress && attempts > 0) {
-        const progressPercent = (attempts / maxAttempts) * 100;
+      await new Promise((resolve) => setTimeout(resolve, currentDelay));
+      totalElapsedTime += currentDelay;
 
-        if (progressPercent > 20 && aiSteps[2].status !== "completed") {
-          aiSteps[2].status = "completed";
-          aiSteps[3].status = "active";
-          onProgress({
-            total: 1,
-            completed: 0,
-            failed: 0,
-            status: "syncing",
-            aiSteps: [...aiSteps],
-            thinkingMessage: "Generating relevant tags for your content...",
-          });
-        }
-
-        if (progressPercent > 40 && aiSteps[3].status !== "completed") {
-          aiSteps[3].status = "completed";
-          aiSteps[4].status = "active";
-          onProgress({
-            total: 1,
-            completed: 0,
-            failed: 0,
-            status: "syncing",
-            aiSteps: [...aiSteps],
-            thinkingMessage: "Creating a concise summary...",
-          });
-        }
-
-        if (progressPercent > 60 && aiSteps[4].status !== "completed") {
-          aiSteps[4].status = "completed";
-          aiSteps[5].status = "active";
-          onProgress({
-            total: 1,
-            completed: 0,
-            failed: 0,
-            status: "syncing",
-            aiSteps: [...aiSteps],
-            thinkingMessage: "Finding related strands in your collection...",
-          });
-        }
-      }
+      // No longer inferring AI step progress based on polling time,
+      // as backend AI analysis is an atomic operation.
+      // The AI steps will be updated only on success or explicit error.
 
       try {
         const response = await StrandsApi.getStrand(strandId);
         const updatedStrand = response.strand;
-        logger.debug(MODULE, `Polling response for strand ${strandId}`, {
-          updatedStrand,
-        });
 
         if (!updatedStrand) {
-          continue;
+          logger.warn(
+            MODULE,
+            `Polling response for strand ${strandId} returned no strand data.`
+          );
+          consecutiveNetworkErrors++;
+          if (consecutiveNetworkErrors >= MAX_CONSECUTIVE_NETWORK_ERRORS) {
+            logger.error(
+              MODULE,
+              `Circuit breaker tripped for strand ${strandId}: too many consecutive null strand responses.`
+            );
+            return {
+              completed: false,
+              error: "No strand data returned repeatedly.",
+            };
+          }
+          continue; // Continue polling, but increment error count
         }
 
-        // Check if sync completed
-        const syncCompleted =
-          updatedStrand.synced_with_ai &&
-          (updatedStrand.sync_history.length >
-            originalStrand.sync_history.length ||
-            updatedStrand.summary !== originalStrand.summary ||
-            JSON.stringify(updatedStrand.tags) !==
-              JSON.stringify(originalStrand.tags));
+        // Reset consecutive network errors on success
+        consecutiveNetworkErrors = 0;
 
-        if (syncCompleted) {
+        // Check AIStatus for failure detection
+        if (updatedStrand.ai_status === "failed") {
+          consecutiveAIFailures++;
+          logger.warn(
+            MODULE,
+            `Strand ${strandId} AI processing failed (attempt ${consecutiveAIFailures}/${MAX_CONSECUTIVE_AI_FAILURES}). Reason: ${
+              updatedStrand.ai_failure_reason || "Unknown"
+            }`
+          );
+
+          if (consecutiveAIFailures >= MAX_CONSECUTIVE_AI_FAILURES) {
+            logger.error(
+              MODULE,
+              `Strand ${strandId} AI processing failed persistently after ${MAX_CONSECUTIVE_AI_FAILURES} attempts.`
+            );
+            return {
+              completed: false,
+              error: `AI processing failed on backend: ${
+                updatedStrand.ai_failure_reason || "Please check backend logs."
+              }`,
+            };
+          }
+          // If not exceeding max retries, continue polling
+          continue;
+        } else if (updatedStrand.ai_status === "completed") {
+          // Reset AI failure counter if it eventually succeeds
+          consecutiveAIFailures = 0;
+        }
+
+        // Null-safe sync history comparison
+        const originalHistoryLength = originalStrand.sync_history?.length || 0;
+        const updatedHistoryLength = updatedStrand.sync_history?.length || 0;
+
+        const syncCompleted = updatedStrand.synced_with_ai;
+        const hasMeaningfulChanges =
+          updatedHistoryLength > originalHistoryLength ||
+          updatedStrand.summary !== originalStrand.summary ||
+          JSON.stringify(updatedStrand.tags) !==
+            JSON.stringify(originalStrand.tags);
+
+        if (syncCompleted && hasMeaningfulChanges) {
+          logger.debug(
+            MODULE,
+            `Strand ${strandId} sync completed with meaningful changes.`
+          );
+          return { completed: true, updatedStrand };
+        }
+
+        // If synced_with_ai is true but no meaningful changes detected,
+        // still consider it completed after a few attempts to avoid infinite polling
+        if (syncCompleted && attempts > MAX_CONSECUTIVE_NETWORK_ERRORS) {
+          // Use network errors as a general threshold for "stuck" polling
+          logger.debug(
+            MODULE,
+            `Strand ${strandId} marked as synced but no meaningful changes detected, considering sync complete after ${attempts} attempts.`
+          );
           return { completed: true, updatedStrand };
         }
       } catch (err) {
         logger.error(
           MODULE,
-          `Error polling for sync status for strand ${strandId}`,
+          `Error polling for sync status for strand ${strandId}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
           err as Error
         );
-        // Continue polling despite errors
+        consecutiveNetworkErrors++;
+        if (consecutiveNetworkErrors >= MAX_CONSECUTIVE_NETWORK_ERRORS) {
+          logger.error(
+            MODULE,
+            `Circuit breaker tripped for strand ${strandId}: too many consecutive network errors.`
+          );
+          return {
+            completed: false,
+            error: `Persistent network error during sync: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          };
+        }
+        // Continue polling despite network errors, but with backoff
       }
     }
+
     logger.warn(
       MODULE,
-      `Strand ${strandId} sync polling timed out after ${maxAttempts} attempts`
+      `Strand ${strandId} sync polling timed out after ${MAX_POLLING_DURATION_SECONDS} seconds and ${attempts} attempts.`
     );
-
-    return { completed: false };
+    return {
+      completed: false,
+      error:
+        "Sync timed out. The AI may still be processing the strand. Please check back later.",
+    };
   }
 
   /**
@@ -170,55 +236,39 @@ export class SyncService {
   ): Promise<SyncResult> {
     const { onProgress, signal } = options;
 
+    // Initialize AI steps at function scope
+    const aiSteps: AIStep[] = [
+      {
+        id: "step-1",
+        label: "Preparing content",
+        status: "active",
+        timestamp: new Date(),
+        details: "Analyzing strand content and structure",
+      },
+      {
+        id: "step-2",
+        label: "Connecting to AI service",
+        status: "pending",
+        timestamp: new Date(),
+      },
+      {
+        id: "step-3",
+        label: "AI Processing",
+        status: "pending",
+        timestamp: new Date(),
+        details: "Analyzing content, generating tags, and creating summary",
+      },
+      {
+        id: "step-4",
+        label: "Saving results",
+        status: "pending",
+        timestamp: new Date(),
+      },
+    ];
+
     try {
       // Notify start
       logger.debug(MODULE, `Starting sync for single strand ${strand.id}`);
-      // Initialize AI steps
-      const aiSteps: AIStep[] = [
-        {
-          id: "step-1",
-          label: "Preparing content",
-          status: "active",
-          timestamp: new Date(),
-          details: "Analyzing strand content and structure",
-        },
-        {
-          id: "step-2",
-          label: "Connecting to AI service",
-          status: "pending",
-          timestamp: new Date(),
-        },
-        {
-          id: "step-3",
-          label: "Extracting insights",
-          status: "pending",
-          timestamp: new Date(),
-        },
-        {
-          id: "step-4",
-          label: "Generating tags",
-          status: "pending",
-          timestamp: new Date(),
-        },
-        {
-          id: "step-5",
-          label: "Creating summary",
-          status: "pending",
-          timestamp: new Date(),
-        },
-        {
-          id: "step-6",
-          label: "Finding related strands",
-          status: "pending",
-          timestamp: new Date(),
-        },
-        {
-          id: "step-7",
-          label: "Saving results",
-          status: "pending",
-          timestamp: new Date(),
-        },
-      ];
 
       if (onProgress) {
         onProgress({
@@ -288,11 +338,13 @@ export class SyncService {
         };
       }
 
-      // Poll for completion (40 attempts × 1 second = 40 seconds max wait)
+      // Poll for completion with intelligent timeout management
       const result = await this.pollStrandSyncCompletion(
         strand.id,
         strand,
-        40,
+        300, // 5 minutes max duration
+        1000, // 1 second initial delay
+        60000, // 1 minute max delay
         signal,
         aiSteps,
         onProgress
@@ -300,8 +352,8 @@ export class SyncService {
 
       if (result.completed) {
         // Mark remaining steps as completed
-        aiSteps[5].status = "completed";
-        aiSteps[6].status = "completed";
+        aiSteps[2].status = "completed";
+        aiSteps[3].status = "completed";
 
         if (onProgress) {
           onProgress({
@@ -321,9 +373,19 @@ export class SyncService {
           strandTitle: this.getStrandTitle(strand),
         };
       } else {
-        const error = signal?.aborted
-          ? "Sync cancelled by user"
-          : "Sync timed out. The AI may still be processing the strand. Please check back later.";
+        const error =
+          result.error ||
+          (signal?.aborted
+            ? "Sync cancelled by user"
+            : "Sync timed out. The AI may still be processing the strand. Please check back later.");
+
+        // Mark all active/pending AI steps as error
+        aiSteps.forEach((step) => {
+          if (step.status === "active" || step.status === "pending") {
+            step.status = "error";
+            step.details = error;
+          }
+        });
 
         if (onProgress) {
           onProgress({
@@ -333,6 +395,7 @@ export class SyncService {
             status: "error",
             message: error,
             currentOperation: "Sync failed",
+            aiSteps: [...aiSteps],
           });
         }
         logger.error(
@@ -354,6 +417,14 @@ export class SyncService {
         err as Error
       );
 
+      // Mark all active/pending AI steps as error
+      aiSteps.forEach((step: AIStep) => {
+        if (step.status === "active" || step.status === "pending") {
+          step.status = "error";
+          step.details = error;
+        }
+      });
+
       if (onProgress) {
         onProgress({
           total: 1,
@@ -362,6 +433,7 @@ export class SyncService {
           status: "error",
           message: error,
           currentOperation: "Sync failed",
+          aiSteps: [...aiSteps],
         });
       }
 
@@ -385,6 +457,21 @@ export class SyncService {
     const results: SyncResult[] = [];
     let completed = 0;
     let failed = 0;
+
+    // Initialize strandProgress for all strands
+    const strandProgress: {
+      strandId: string;
+      strandTitle: string;
+      status: "pending" | "active" | "completed" | "error" | "cancelled";
+      message?: string;
+      aiSteps?: AIStep[];
+      thinkingMessage?: string;
+    }[] = strands.map((s) => ({
+      strandId: s.id,
+      strandTitle: this.getStrandTitle(s),
+      status: "pending",
+      message: "Waiting to start...",
+    }));
 
     // Create abort controller for cancellation support
     this.abortController = new AbortController();
@@ -422,6 +509,13 @@ export class SyncService {
         }
 
         // Notify progress - starting current strand
+        // Update current strand's status to active
+        const currentStrandIndex = strands.findIndex((s) => s.id === strand.id);
+        if (currentStrandIndex !== -1) {
+          strandProgress[currentStrandIndex].status = "active";
+          strandProgress[currentStrandIndex].message = "Processing...";
+        }
+
         if (onProgress) {
           onProgress({
             total: strands.length,
@@ -433,6 +527,7 @@ export class SyncService {
               strands.length
             }...`,
             currentOperation: "Processing input",
+            strandProgress: [...strandProgress], // Pass a copy to ensure immutability
           });
         }
 
@@ -441,7 +536,35 @@ export class SyncService {
           MODULE,
           `Initiating sync for strand ${strand.id} in multi-sync operation`
         );
-        const result = await this.syncSingle(strand, { signal });
+        const result = await this.syncSingle(strand, {
+          signal,
+          onProgress: (p) => {
+            // Update the specific strand's progress with AI steps and thinking messages
+            if (currentStrandIndex !== -1) {
+              strandProgress[currentStrandIndex] = {
+                ...strandProgress[currentStrandIndex],
+                status: p.status === "syncing" ? ("active" as const) : p.status,
+                message: p.message,
+                aiSteps: p.aiSteps,
+                thinkingMessage: p.thinkingMessage,
+              };
+              onProgress?.({
+                total: strands.length,
+                completed,
+                failed,
+                currentItem: this.getStrandTitle(strand),
+                status: "syncing",
+                message: `Processing strand ${completed + failed + 1} of ${
+                  strands.length
+                }...`,
+                currentOperation: p.currentOperation,
+                aiSteps: p.aiSteps,
+                thinkingMessage: p.thinkingMessage,
+                strandProgress: [...strandProgress],
+              });
+            }
+          },
+        });
         results.push(result);
         logger.debug(MODULE, `Sync result for strand ${strand.id}`, { result });
 
@@ -449,6 +572,18 @@ export class SyncService {
           completed++;
         } else {
           failed++;
+        }
+
+        // Update current strand's status based on result
+        if (currentStrandIndex !== -1) {
+          strandProgress[currentStrandIndex].status = result.success
+            ? "completed"
+            : "error";
+          strandProgress[currentStrandIndex].message = result.success
+            ? "Completed"
+            : result.error || "Failed";
+          strandProgress[currentStrandIndex].aiSteps = undefined; // Clear AI steps after completion/failure
+          strandProgress[currentStrandIndex].thinkingMessage = undefined; // Clear thinking message
         }
 
         // Notify progress after completion
@@ -460,6 +595,7 @@ export class SyncService {
             status: "syncing",
             message: `Processed ${completed + failed} of ${strands.length}`,
             currentOperation: result.success ? "Completed" : "Failed",
+            strandProgress: [...strandProgress],
           });
         }
       }
@@ -495,6 +631,7 @@ export class SyncService {
               : finalStatus === "error"
               ? "Sync completed with errors"
               : "Sync cancelled",
+          strandProgress: [...strandProgress],
         });
       }
 
@@ -524,6 +661,7 @@ export class SyncService {
           status: "error",
           message: error,
           currentOperation: "Sync failed",
+          strandProgress: [...strandProgress],
         });
       }
       logger.error(MODULE, "Error during multi-strand sync", err as Error);

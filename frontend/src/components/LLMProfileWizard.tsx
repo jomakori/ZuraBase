@@ -50,13 +50,31 @@ const LLMProfileWizard: React.FC<LLMProfileWizardProps> = ({
     loadModels,
   } = actions;
 
-  // Auto-default first profile if no profiles exist
+  // Auto-default first profile if no profiles exist and set default server URL
   React.useEffect(() => {
-    if (autoDefaultFirst && !formData.id) {
-      setFormData({
-        ...formData,
-        is_default: true,
-      });
+    if (!formData.id) {
+      const updates: any = {};
+
+      // Set as default if this is the first profile
+      if (autoDefaultFirst) {
+        updates.is_default = true;
+      }
+
+      // Set default server URL if not already set
+      if (!formData.server_url && formData.service) {
+        updates.server_url = getDefaultServerUrl(formData.service);
+      } else if (!formData.server_url) {
+        // Default to OpenAI if no service specified
+        updates.server_url = getDefaultServerUrl("openai");
+        updates.service = "openai";
+      }
+
+      if (Object.keys(updates).length > 0) {
+        setFormData({
+          ...formData,
+          ...updates,
+        });
+      }
     }
   }, [autoDefaultFirst, formData.id]);
 
@@ -128,10 +146,17 @@ const LLMProfileWizard: React.FC<LLMProfileWizardProps> = ({
             onChange={handleChange}
             required
             placeholder="e.g., My OpenAI Profile"
-            className="w-full border border-gray-300 rounded-md shadow-sm p-2 focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+            className={`w-full border rounded-md shadow-sm p-2 focus:outline-none focus:ring-blue-500 focus:border-blue-500 ${
+              formErrors.name ? "border-red-300" : "border-gray-300"
+            }`}
           />
           {formErrors.name && (
             <p className="mt-1 text-sm text-red-600">{formErrors.name}</p>
+          )}
+          {!formErrors.name && formData?.name && (
+            <p className="mt-1 text-xs text-green-600">
+              ✓ Profile name looks good
+            </p>
           )}
         </div>
 
@@ -176,11 +201,26 @@ const LLMProfileWizard: React.FC<LLMProfileWizardProps> = ({
               onChange={handleChange}
               required={isCustomService}
               placeholder="https://your-custom-api.com"
-              className="w-full border border-gray-300 rounded-md shadow-sm p-2 focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+              className={`w-full border rounded-md shadow-sm p-2 focus:outline-none focus:ring-blue-500 focus:border-blue-500 ${
+                formErrors.server_url ? "border-red-300" : "border-gray-300"
+              }`}
             />
             {formErrors.server_url && (
               <p className="mt-1 text-sm text-red-600">
                 {formErrors.server_url}
+              </p>
+            )}
+            {!formErrors.server_url &&
+              formData?.server_url &&
+              /^https?:\/\/.+/.test(formData.server_url) && (
+                <p className="mt-1 text-xs text-green-600">
+                  ✓ Server URL format looks good
+                </p>
+              )}
+            {!formData?.server_url && isCustomService && (
+              <p className="mt-1 text-xs text-gray-500">
+                Enter the base URL for your custom LLM service (e.g.,
+                https://api.openai.com)
               </p>
             )}
           </div>
@@ -202,10 +242,24 @@ const LLMProfileWizard: React.FC<LLMProfileWizardProps> = ({
             onChange={handleChange}
             required
             placeholder="Enter your API key"
-            className="w-full border border-gray-300 rounded-md shadow-sm p-2 focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+            className={`w-full border rounded-md shadow-sm p-2 focus:outline-none focus:ring-blue-500 focus:border-blue-500 ${
+              formErrors.api_key ? "border-red-300" : "border-gray-300"
+            }`}
           />
           {formErrors.api_key && (
             <p className="mt-1 text-sm text-red-600">{formErrors.api_key}</p>
+          )}
+          {!formErrors.api_key &&
+            formData?.api_key &&
+            formData.api_key.length >= 10 && (
+              <p className="mt-1 text-xs text-green-600">
+                ✓ API key format looks good
+              </p>
+            )}
+          {!formData?.api_key && (
+            <p className="mt-1 text-xs text-gray-500">
+              Your API key is required to connect to the LLM service
+            </p>
           )}
         </div>
 
@@ -226,7 +280,7 @@ const LLMProfileWizard: React.FC<LLMProfileWizardProps> = ({
           </button>
 
           {/* Connection Test Result */}
-          {connectionMessage && (
+          {connectionTested && connectionMessage && (
             <p
               className={`mt-2 text-sm flex items-center justify-center ${
                 connectionSuccess ? "text-green-600" : "text-red-600"
@@ -250,14 +304,13 @@ const LLMProfileWizard: React.FC<LLMProfileWizardProps> = ({
                 htmlFor="model"
                 className="block text-sm font-medium text-gray-700"
               >
-                Model
+                Model{" "}
+                {loadingModels && (
+                  <span className="text-xs text-gray-500 italic">
+                    (Loading...)
+                  </span>
+                )}
               </label>
-              {/* Automatically load models after connection success, removed Load Models link */}
-              {availableModels.length === 0 && (
-                <span className="text-xs text-gray-500 italic">
-                  {loadingModels ? "Loading models..." : "No models loaded yet."}
-                </span>
-              )}
             </div>
 
             {availableModels.length > 0 ? (
@@ -270,15 +323,12 @@ const LLMProfileWizard: React.FC<LLMProfileWizardProps> = ({
                 placeholder="Select a model"
                 className="w-full"
               />
-            ) : (
-              <div className="text-sm text-gray-500 italic">
-                No models loaded yet. Click "Load Models" to fetch available
-                models.
-              </div>
-            )}
-
-            {modelsError && (
+            ) : modelsError ? (
               <p className="mt-1 text-sm text-red-600">{modelsError}</p>
+            ) : (
+              <p className="mt-1 text-sm text-gray-500 italic">
+                Models will load after successful connection test
+              </p>
             )}
           </div>
         )}
@@ -323,7 +373,8 @@ const LLMProfileWizard: React.FC<LLMProfileWizardProps> = ({
             type="submit"
             disabled={
               loading ||
-              (!formData?.id && (!connectionTested || !connectionSuccess))
+              (!formData?.id && (!connectionTested || !connectionSuccess)) ||
+              !formData?.model
             }
             className={`${
               showSkipButton && onSkip ? "flex-1" : "w-full"
@@ -334,6 +385,11 @@ const LLMProfileWizard: React.FC<LLMProfileWizardProps> = ({
             )}
             {formData?.id ? "Save Changes" : "Save Profile"}
           </button>
+          {!formData?.model && connectionSuccess && (
+            <p className="mt-2 text-xs text-gray-500 text-center">
+              Please select a model to continue
+            </p>
+          )}
         </div>
       </form>
     </div>

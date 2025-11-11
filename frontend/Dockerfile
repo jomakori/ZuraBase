@@ -1,5 +1,5 @@
 # Use the official Node.js LTS Alpine image as the base
-FROM node:alpine
+FROM node:alpine3.22
 
 # Install curl for healthchecks
 RUN apk add --no-cache curl

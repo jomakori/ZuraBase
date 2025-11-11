@@ -23,7 +23,7 @@ const LLMProfileWizard: React.FC<LLMProfileWizardProps> = ({
     name: "OpenAI Default",
     server_url: "",
     api_key: "",
-    model: "gpt-4o",
+    model: "",
     is_default: true,
     service: "openai",
   });

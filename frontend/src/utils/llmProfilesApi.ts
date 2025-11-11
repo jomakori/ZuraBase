@@ -302,24 +302,18 @@ export const LLMProfilesApi = {
         body: JSON.stringify(testRequest),
       });
 
-      if (!response.ok) {
-        // Handle authentication errors
-        if (response.status === 401) {
-          const handled = await handleAuthError(response.status);
-          if (handled) {
-            throw new Error("Authentication required - please log in again");
-          }
+      // Handle authentication errors
+      if (response.status === 401) {
+        const handled = await handleAuthError(response.status);
+        if (handled) {
+          throw new Error("Authentication required - please log in again");
         }
-
-        const errorText = await response.text();
-        throw new Error(
-          `Failed to test LLM connection: ${response.status} ${
-            response.statusText
-          } - ${errorText || "No response body"}`
-        );
       }
 
-      return await response.json();
+      // Parse JSON response regardless of status code
+      // Backend returns {success: boolean, message: string} for both success and failure
+      const result = await response.json();
+      return result;
     } catch (err) {
       log.error("Error testing LLM connection:", err);
       throw err;
@@ -350,24 +344,18 @@ export const LLMProfilesApi = {
         }
       );
 
-      if (!response.ok) {
-        // Handle authentication errors
-        if (response.status === 401) {
-          const handled = await handleAuthError(response.status);
-          if (handled) {
-            throw new Error("Authentication required - please log in again");
-          }
+      // Handle authentication errors
+      if (response.status === 401) {
+        const handled = await handleAuthError(response.status);
+        if (handled) {
+          throw new Error("Authentication required - please log in again");
         }
-
-        const errorText = await response.text();
-        throw new Error(
-          `Failed to test stored LLM connection: ${response.status} ${
-            response.statusText
-          } - ${errorText || "No response body"}`
-        );
       }
 
-      return await response.json();
+      // Parse JSON response regardless of status code
+      // Backend returns {success: boolean, message: string} for both success and failure
+      const result = await response.json();
+      return result;
     } catch (err) {
       log.error(`Error testing stored LLM connection for profile ${id}:`, err);
       throw err;

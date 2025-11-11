@@ -80,13 +80,18 @@ export const useLLMConnectionWizard = (
 
   const loadModels = useCallback(async () => {
     console.log("loadModels called. loadingModels:", loadingModels);
-    if (loadingModels) return; // Prevent duplicate calls
+    if (loadingModels) {
+      console.log("Already loading models, skipping duplicate call");
+      return;
+    }
+
     setLoadingModels(true);
     setModelsError(null);
+    setAvailableModels([]); // Clear previous models
+
     try {
       console.log("Attempting to fetch available models...");
 
-      let result;
       const service = formData.service || "openai";
       const apiKey = formData.api_key || "";
       const serverURL = formData.server_url || "";
@@ -95,17 +100,14 @@ export const useLLMConnectionWizard = (
         throw new Error("API key is required to fetch models");
       }
 
+      let result;
       if (formData.id) {
-        // For existing profiles, use the standard endpoint (which will use the stored API key)
         console.log(
           "Fetching models for existing profile via backend proxy..."
         );
         result = await getAvailableModels();
       } else {
-        // For new profiles, pass the API key and server URL to the backend proxy
-        console.log(
-          "Fetching models for new profile via backend proxy with provided API key and server URL..."
-        );
+        console.log("Fetching models for new profile:", { service, serverURL });
         result = await getAvailableModels(apiKey, serverURL, service);
       }
 
@@ -120,7 +122,6 @@ export const useLLMConnectionWizard = (
       } else if (Array.isArray(result)) {
         parsed = result.map((m: any) => m.id || m);
       } else if (result && typeof result === "object") {
-        // Try to extract models from nested structure
         const allKeys = Object.keys(result);
         for (const key of allKeys) {
           if (Array.isArray(result[key])) {
@@ -133,27 +134,28 @@ export const useLLMConnectionWizard = (
       console.log("Parsed models:", parsed);
 
       if (parsed.length === 0) {
-        setAvailableModels([]);
-        setModelsError(
-          "No models were returned from the server. The response structure may be unexpected."
-        );
-        console.log("No models returned, setting error.");
-      } else {
-        setAvailableModels(parsed);
-        console.log("Models populated:", parsed);
+        throw new Error("No models were returned from the server");
       }
+
+      setAvailableModels(parsed);
+      console.log(`Successfully loaded ${parsed.length} models`);
     } catch (err: any) {
       console.error("Failed to load models:", err);
       setAvailableModels([]);
       setModelsError(
         err?.message || "Failed to fetch models. Please verify the connection."
       );
-      console.log("Error loading models, setting error and clearing list.");
     } finally {
       setLoadingModels(false);
-      console.log("loadModels finished. loadingModels set to false.");
+      console.log("loadModels finished");
     }
-  }, [loadingModels, formData.id, formData.service, formData.api_key]);
+  }, [
+    loadingModels,
+    formData.id,
+    formData.service,
+    formData.api_key,
+    formData.server_url,
+  ]);
 
   // Don't automatically load models - we'll handle this manually in the wizard
   // when the user explicitly wants to see available models
@@ -174,16 +176,40 @@ export const useLLMConnectionWizard = (
   const validateForm = useCallback(() => {
     const errors: { [key: string]: string } = {};
 
+    // Validate profile name
     if (!formData.name) {
       errors.name = "Profile name is required.";
+    } else if (formData.name.trim() === "") {
+      errors.name = "Profile name cannot be empty or only whitespace.";
+    } else if (formData.name.length > 100) {
+      errors.name = "Profile name must be less than 100 characters.";
     }
 
+    // Validate API key
     if (!formData.api_key && !formData.id) {
       errors.api_key = "API key is required.";
+    } else if (formData.api_key && formData.api_key.length < 10) {
+      errors.api_key =
+        "API key appears to be too short (minimum 10 characters).";
+    } else if (formData.api_key && formData.api_key.trim() === "") {
+      errors.api_key = "API key cannot be empty or only whitespace.";
     }
 
-    if (formData.server_url && !/^https?:\/\/.+/.test(formData.server_url)) {
-      errors.server_url = "Invalid URL format (e.g., https://api.openai.com).";
+    // Validate server URL
+    if (formData.server_url) {
+      if (!/^https?:\/\/.+/.test(formData.server_url)) {
+        errors.server_url =
+          "Invalid URL format. Must start with http:// or https:// (e.g., https://api.openai.com).";
+      } else if (formData.server_url.length > 500) {
+        errors.server_url = "Server URL must be less than 500 characters.";
+      }
+    }
+
+    // Validate model name if provided
+    if (formData.model && formData.model.length > 100) {
+      errors.model = "Model name must be less than 100 characters.";
+    } else if (formData.model && formData.model.trim() === "") {
+      errors.model = "Model name cannot be empty or only whitespace.";
     }
 
     setFormErrors(errors);
@@ -206,19 +232,20 @@ export const useLLMConnectionWizard = (
       );
       setConnectionTested(true);
 
-      // Only auto-load models if connection success is true in the test result
+      // Load models only if connection was successful
       if (result?.success) {
-        console.log("Test connection success, fetching available models...");
+        console.log("Connection test successful, loading models...");
         await loadModels();
       } else {
-        console.warn("Test connection failed, skipping model fetch.");
+        // Connection test failed - clear models and let the UI show the error
+        console.warn("Connection test failed:", result?.message);
+        setAvailableModels([]);
       }
     } catch (err: any) {
-      console.error("Error during connection test:", err);
-      setConnectionTested(false);
-      setModelsError(
-        "Failed to test connection. Please confirm your API key or network access."
-      );
+      // Network or unexpected errors
+      console.error("Connection test error:", err);
+      setConnectionTested(true); // Mark as tested so error message shows
+      setAvailableModels([]);
       if (onError) onError(err instanceof Error ? err : new Error(String(err)));
     }
   }, [

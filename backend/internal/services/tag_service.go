@@ -12,11 +12,11 @@ import (
 
 // TagService provides methods for tag management and related content discovery
 type TagService struct {
-	aiClient *AIClient
+	aiClient LLMClient
 }
 
 // NewTagService creates a new tag service
-func NewTagService(aiClient *AIClient) *TagService {
+func NewTagService(aiClient LLMClient) *TagService {
 	return &TagService{
 		aiClient: aiClient,
 	}
@@ -32,7 +32,10 @@ func (s *TagService) ExtractTagsFromContent(ctx context.Context, content, source
 	}
 
 	// Use the AI client to analyze the content
-	analysis, err := s.aiClient.AnalyzeContent(ctx, content, source)
+	analysis, err := s.aiClient.AnalyzeContent(ctx, &AnalysisRequest{
+		Content: content,
+		Source:  source,
+	})
 	if err != nil {
 		log.Printf("Error analyzing content: %v", err)
 		return nil, "", fmt.Errorf("AI analysis failed: %w", err)
@@ -69,7 +72,10 @@ func (s *TagService) ExtractTagsFromContentWithContext(ctx context.Context, cont
 	}
 
 	// Use the AI client to analyze the content with context
-	analysis, err := s.aiClient.AnalyzeContent(ctx, contextContent, source)
+	analysis, err := s.aiClient.AnalyzeContent(ctx, &AnalysisRequest{
+		Content: contextContent,
+		Source:  source,
+	})
 	if err != nil {
 		log.Printf("Error analyzing content with context: %v", err)
 		return nil, "", fmt.Errorf("AI analysis failed: %w", err)
