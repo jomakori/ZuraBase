@@ -6,326 +6,565 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"testing"
-	"time"
 
 	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
 
-	"zurabase/api/llm_profiles"
-	"zurabase/auth"
-	"zurabase/models"
+	"zurabase/internal/auth"
+	"zurabase/internal/models"
+	"zurabase/internal/server"
 )
 
-func TestLLMProfilesAPI(t *testing.T) {
-	// Set up test environment
-	client, err := mongo.Connect(context.Background(), options.Client().ApplyURI(os.Getenv("MONGO_URI")))
+// setupAuth creates a test JWT token for a given user ID and email.
+func setupAuth(t *testing.T, userID, email string) string {
+	token, err := auth.GenerateToken(userID, email)
 	if err != nil {
-		t.Skipf("MongoDB not available: %v", err)
+		t.Fatalf("Failed to generate auth token: %v", err)
+	}
+	return token
+}
+
+func TestLLMProfile_API_Create(t *testing.T) {
+	// Set up test environment
+	client := SetupTestMongoClient(context.Background(), t)
+	if client == nil {
+		return
 	}
 	defer client.Disconnect(context.Background())
 
 	// Initialize required packages
-	err = models.InitializeLLMProfiles(client, "test_zurabase")
+	err := models.InitializeLLMProfiles(client, "test_zurabase")
 	if err != nil {
 		t.Fatalf("Failed to initialize LLM profiles: %v", err)
 	}
 
 	auth.Initialize(client, "test_zurabase")
+	auth.ReloadJWTSecret() // Ensure JWT secret is synchronized
 
 	// Clean up any existing test data
 	collection := client.Database("test_zurabase").Collection("llm_profiles")
 	_, _ = collection.DeleteMany(context.Background(), bson.M{"user_id": "test-api-user"})
 
-	// Create test server
-	mux := http.NewServeMux()
-	llm_profiles.RegisterRoutes(mux)
+	// Generate a test token for authentication
+	testUserToken := setupAuth(t, "test-api-user", "test@example.com")
 
-	// Mock auth middleware for testing
-	testHandler := func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Add test user to context
-			ctx := context.WithValue(r.Context(), "user_id", "test-api-user")
-			next.ServeHTTP(w, r.WithContext(ctx))
-		})
+	// Set up test router
+	router := server.SetupTestRouter()
+
+	profileData := map[string]interface{}{
+		"name":       "Test API Profile",
+		"server_url": "https://api.test.com",
+		"api_key":    "test-api-key-123",
+		"is_default": true,
+		"model":      "gpt-3.5-turbo",
 	}
 
-	server := httptest.NewServer(testHandler(mux))
-	defer server.Close()
+	jsonData, _ := json.Marshal(profileData)
+	req, err := http.NewRequest("POST", "/api/llm-profiles", bytes.NewBuffer(jsonData))
+	if err != nil {
+		t.Fatalf("Failed to create request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+testUserToken)
 
-	clientHTTP := &http.Client{
-		Timeout: 30 * time.Second,
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Errorf("Expected status 201, got %d. Response: %s", rec.Code, rec.Body.String())
 	}
 
-	t.Run("Create LLM Profile", func(t *testing.T) {
-		profileData := map[string]interface{}{
-			"name":       "Test API Profile",
-			"server_url": "https://api.test.com",
-			"api_key":    "test-api-key-123",
-			"is_default": true,
-		}
+	var response map[string]interface{}
+	err = json.NewDecoder(rec.Body).Decode(&response)
+	if err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
 
-		jsonData, _ := json.Marshal(profileData)
-		req, err := http.NewRequest("POST", server.URL+"/api/llm-profiles", bytes.NewBuffer(jsonData))
-		if err != nil {
-			t.Fatalf("Failed to create request: %v", err)
-		}
-		req.Header.Set("Content-Type", "application/json")
+	if response["profile"] == nil {
+		t.Error("Expected profile in response")
+	}
 
-		resp, err := clientHTTP.Do(req)
-		if err != nil {
-			t.Fatalf("Request failed: %v", err)
-		}
-		defer resp.Body.Close()
+	profile := response["profile"].(map[string]interface{})
+	if profile["name"] != "Test API Profile" {
+		t.Errorf("Profile name mismatch, got %s, want %s", profile["name"], "Test API Profile")
+	}
+}
 
-		if resp.StatusCode != http.StatusCreated {
-			t.Errorf("Expected status 201, got %d", resp.StatusCode)
-		}
+func TestLLMProfile_API_Get(t *testing.T) {
+	// Set up test environment
+	client := SetupTestMongoClient(context.Background(), t)
+	if client == nil {
+		return
+	}
+	defer client.Disconnect(context.Background())
 
-		var response map[string]interface{}
-		err = json.NewDecoder(resp.Body).Decode(&response)
-		if err != nil {
-			t.Fatalf("Failed to decode response: %v", err)
-		}
+	// Initialize required packages
+	err := models.InitializeLLMProfiles(client, "test_zurabase")
+	if err != nil {
+		t.Fatalf("Failed to initialize LLM profiles: %v", err)
+	}
 
-		if response["profile"] == nil {
-			t.Error("Expected profile in response")
-		}
+	auth.Initialize(client, "test_zurabase")
+	auth.ReloadJWTSecret()
 
-		profile := response["profile"].(map[string]interface{})
-		if profile["name"] != "Test API Profile" {
-			t.Errorf("Profile name mismatch, got %s, want %s", profile["name"], "Test API Profile")
-		}
-	})
+	// Clean up any existing test data
+	collection := client.Database("test_zurabase").Collection("llm_profiles")
+	_, _ = collection.DeleteMany(context.Background(), bson.M{"user_id": "test-api-user"})
 
-	t.Run("Get LLM Profiles", func(t *testing.T) {
-		req, err := http.NewRequest("GET", server.URL+"/api/llm-profiles", nil)
-		if err != nil {
-			t.Fatalf("Failed to create request: %v", err)
-		}
+	// Generate a test token for authentication
+	testUserToken := setupAuth(t, "test-api-user", "test@example.com")
 
-		resp, err := clientHTTP.Do(req)
-		if err != nil {
-			t.Fatalf("Request failed: %v", err)
-		}
-		defer resp.Body.Close()
+	// Set up test router
+	router := server.SetupTestRouter()
 
-		if resp.StatusCode != http.StatusOK {
-			t.Errorf("Expected status 200, got %d", resp.StatusCode)
-		}
+	// First create a profile to get
+	profileData := map[string]interface{}{
+		"name":       "Test Profile for Get",
+		"server_url": "https://api.test.com",
+		"api_key":    "test-api-key-get",
+		"is_default": true,
+		"model":      "gpt-3.5-turbo",
+	}
 
-		var response map[string]interface{}
-		err = json.NewDecoder(resp.Body).Decode(&response)
-		if err != nil {
-			t.Fatalf("Failed to decode response: %v", err)
-		}
+	jsonData, _ := json.Marshal(profileData)
+	createReq, err := http.NewRequest("POST", "/api/llm-profiles", bytes.NewBuffer(jsonData))
+	if err != nil {
+		t.Fatalf("Failed to create request: %v", err)
+	}
+	createReq.Header.Set("Content-Type", "application/json")
+	createReq.Header.Set("Authorization", "Bearer "+testUserToken)
 
-		if response["profiles"] == nil {
-			t.Error("Expected profiles in response")
-		}
+	createRec := httptest.NewRecorder()
+	router.ServeHTTP(createRec, createReq)
 
-		profiles := response["profiles"].([]interface{})
-		if len(profiles) == 0 {
-			t.Error("Expected at least one profile")
-		}
-	})
+	if createRec.Code != http.StatusCreated {
+		t.Fatalf("Failed to create profile for get test, status: %d, response: %s", createRec.Code, createRec.Body.String())
+	}
 
-	t.Run("Update LLM Profile", func(t *testing.T) {
-		// First, get a profile to update
-		profiles, err := models.GetLLMProfilesByUser(context.Background(), "test-api-user")
-		if err != nil || len(profiles) == 0 {
-			t.Fatalf("No profiles found to update")
-		}
+	// Now get the profiles
+	getReq, err := http.NewRequest("GET", "/api/llm-profiles", nil)
+	if err != nil {
+		t.Fatalf("Failed to create request: %v", err)
+	}
+	getReq.Header.Set("Authorization", "Bearer "+testUserToken)
 
-		profileID := profiles[0].ID
+	getRec := httptest.NewRecorder()
+	router.ServeHTTP(getRec, getReq)
 
-		updateData := map[string]interface{}{
-			"name":       "Updated API Profile",
-			"server_url": "https://api.updated.com",
-			"api_key":    "updated-api-key",
-			"is_default": false,
-		}
+	if getRec.Code != http.StatusOK {
+		t.Errorf("Expected status 200, got %d. Response: %s", getRec.Code, getRec.Body.String())
+	}
 
-		jsonData, _ := json.Marshal(updateData)
-		req, err := http.NewRequest("PUT", server.URL+"/api/llm-profiles/"+profileID, bytes.NewBuffer(jsonData))
-		if err != nil {
-			t.Fatalf("Failed to create request: %v", err)
-		}
-		req.Header.Set("Content-Type", "application/json")
+	var response map[string]interface{}
+	err = json.NewDecoder(getRec.Body).Decode(&response)
+	if err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
 
-		resp, err := clientHTTP.Do(req)
-		if err != nil {
-			t.Fatalf("Request failed: %v", err)
-		}
-		defer resp.Body.Close()
+	if response["profiles"] == nil {
+		t.Error("Expected profiles in response")
+	}
 
-		if resp.StatusCode != http.StatusOK {
-			t.Errorf("Expected status 200, got %d", resp.StatusCode)
-		}
+	profiles := response["profiles"].([]interface{})
+	if len(profiles) == 0 {
+		t.Error("Expected at least one profile")
+	}
+}
 
-		var response map[string]interface{}
-		err = json.NewDecoder(resp.Body).Decode(&response)
-		if err != nil {
-			t.Fatalf("Failed to decode response: %v", err)
-		}
+func TestLLMProfile_API_Update(t *testing.T) {
+	// Set up test environment
+	client := SetupTestMongoClient(context.Background(), t)
+	if client == nil {
+		return
+	}
+	defer client.Disconnect(context.Background())
 
-		profile := response["profile"].(map[string]interface{})
-		if profile["name"] != "Updated API Profile" {
-			t.Errorf("Profile name mismatch after update, got %s, want %s", profile["name"], "Updated API Profile")
-		}
-	})
+	// Initialize required packages
+	err := models.InitializeLLMProfiles(client, "test_zurabase")
+	if err != nil {
+		t.Fatalf("Failed to initialize LLM profiles: %v", err)
+	}
 
-	t.Run("Set Default LLM Profile", func(t *testing.T) {
-		// Get a profile to set as default
-		profiles, err := models.GetLLMProfilesByUser(context.Background(), "test-api-user")
-		if err != nil || len(profiles) == 0 {
-			t.Fatalf("No profiles found")
-		}
+	auth.Initialize(client, "test_zurabase")
+	auth.ReloadJWTSecret()
 
-		profileID := profiles[0].ID
+	// Clean up any existing test data
+	collection := client.Database("test_zurabase").Collection("llm_profiles")
+	_, _ = collection.DeleteMany(context.Background(), bson.M{"user_id": "test-api-user"})
 
-		req, err := http.NewRequest("PUT", server.URL+"/api/llm-profiles/"+profileID+"/set-default", nil)
-		if err != nil {
-			t.Fatalf("Failed to create request: %v", err)
-		}
+	// Generate a test token for authentication
+	testUserToken := setupAuth(t, "test-api-user", "test@example.com")
 
-		resp, err := clientHTTP.Do(req)
-		if err != nil {
-			t.Fatalf("Request failed: %v", err)
-		}
-		defer resp.Body.Close()
+	// Set up test router
+	router := server.SetupTestRouter()
 
-		if resp.StatusCode != http.StatusOK {
-			t.Errorf("Expected status 200, got %d", resp.StatusCode)
-		}
+	// First create a profile to update
+	profileData := map[string]interface{}{
+		"name":       "Test Profile for Update",
+		"server_url": "https://api.test.com",
+		"api_key":    "test-api-key-update",
+		"is_default": true,
+		"model":      "gpt-3.5-turbo",
+	}
 
-		var response map[string]interface{}
-		err = json.NewDecoder(resp.Body).Decode(&response)
-		if err != nil {
-			t.Fatalf("Failed to decode response: %v", err)
-		}
+	jsonData, _ := json.Marshal(profileData)
+	createReq, err := http.NewRequest("POST", "/api/llm-profiles", bytes.NewBuffer(jsonData))
+	if err != nil {
+		t.Fatalf("Failed to create request: %v", err)
+	}
+	createReq.Header.Set("Content-Type", "application/json")
+	createReq.Header.Set("Authorization", "Bearer "+testUserToken)
 
-		profile := response["profile"].(map[string]interface{})
-		if !profile["is_default"].(bool) {
-			t.Error("Profile should be marked as default after set-default call")
-		}
-	})
+	createRec := httptest.NewRecorder()
+	router.ServeHTTP(createRec, createReq)
 
-	t.Run("Test LLM Connection", func(t *testing.T) {
-		testData := map[string]interface{}{
-			"server_url": "https://api.openai.com",
-			"api_key":    "test-api-key-connection",
-		}
+	if createRec.Code != http.StatusCreated {
+		t.Fatalf("Failed to create profile for update test, status: %d, response: %s", createRec.Code, createRec.Body.String())
+	}
 
-		jsonData, _ := json.Marshal(testData)
-		req, err := http.NewRequest("POST", server.URL+"/api/llm-profiles/test-connection", bytes.NewBuffer(jsonData))
-		if err != nil {
-			t.Fatalf("Failed to create request: %v", err)
-		}
-		req.Header.Set("Content-Type", "application/json")
+	var createResponse map[string]interface{}
+	err = json.NewDecoder(createRec.Body).Decode(&createResponse)
+	if err != nil {
+		t.Fatalf("Failed to decode create response: %v", err)
+	}
 
-		resp, err := clientHTTP.Do(req)
-		if err != nil {
-			t.Fatalf("Request failed: %v", err)
-		}
-		defer resp.Body.Close()
+	profile := createResponse["profile"].(map[string]interface{})
+	profileID := profile["id"].(string)
 
-		// Connection test might fail (since we're using a fake API key), but should return a proper response
-		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusBadRequest {
-			t.Errorf("Expected status 200 or 400, got %d", resp.StatusCode)
-		}
+	// Now update the profile
+	updateData := map[string]interface{}{
+		"name":       "Updated API Profile",
+		"server_url": "https://api.updated.com",
+		"api_key":    "updated-api-key",
+		"model":      "gpt-4",
+		"is_default": false,
+	}
 
-		var response map[string]interface{}
-		err = json.NewDecoder(resp.Body).Decode(&response)
-		if err != nil {
-			t.Fatalf("Failed to decode response: %v", err)
-		}
+	updateJsonData, _ := json.Marshal(updateData)
+	updateReq, err := http.NewRequest("PUT", "/api/llm-profiles/"+profileID, bytes.NewBuffer(updateJsonData))
+	if err != nil {
+		t.Fatalf("Failed to create request: %v", err)
+	}
+	updateReq.Header.Set("Content-Type", "application/json")
+	updateReq.Header.Set("Authorization", "Bearer "+testUserToken)
 
-		if response["success"] == nil {
-			t.Error("Expected success field in response")
-		}
-	})
+	updateRec := httptest.NewRecorder()
+	router.ServeHTTP(updateRec, updateReq)
 
-	t.Run("Delete LLM Profile", func(t *testing.T) {
-		// Get a profile to delete
-		profiles, err := models.GetLLMProfilesByUser(context.Background(), "test-api-user")
-		if err != nil || len(profiles) == 0 {
-			t.Fatalf("No profiles found to delete")
-		}
+	if updateRec.Code != http.StatusOK {
+		t.Errorf("Expected status 200, got %d. Response: %s", updateRec.Code, updateRec.Body.String())
+	}
 
-		profileID := profiles[0].ID
+	var updateResponse map[string]interface{}
+	err = json.NewDecoder(updateRec.Body).Decode(&updateResponse)
+	if err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
 
-		req, err := http.NewRequest("DELETE", server.URL+"/api/llm-profiles/"+profileID, nil)
-		if err != nil {
-			t.Fatalf("Failed to create request: %v", err)
-		}
+	updatedProfile := updateResponse["profile"].(map[string]interface{})
+	if updatedProfile["name"] != "Updated API Profile" {
+		t.Errorf("Profile name mismatch after update, got %s, want %s", updatedProfile["name"], "Updated API Profile")
+	}
+}
 
-		resp, err := clientHTTP.Do(req)
-		if err != nil {
-			t.Fatalf("Request failed: %v", err)
-		}
-		defer resp.Body.Close()
+func TestLLMProfile_API_SetDefault(t *testing.T) {
+	// Set up test environment
+	client := SetupTestMongoClient(context.Background(), t)
+	if client == nil {
+		return
+	}
+	defer client.Disconnect(context.Background())
 
-		if resp.StatusCode != http.StatusNoContent {
-			t.Errorf("Expected status 204, got %d", resp.StatusCode)
-		}
+	// Initialize required packages
+	err := models.InitializeLLMProfiles(client, "test_zurabase")
+	if err != nil {
+		t.Fatalf("Failed to initialize LLM profiles: %v", err)
+	}
 
-		// Verify the profile was actually deleted
-		_, err = models.GetLLMProfile(context.Background(), profileID)
-		if err == nil {
-			t.Error("Profile should have been deleted")
-		}
-	})
+	auth.Initialize(client, "test_zurabase")
+	auth.ReloadJWTSecret()
 
-	t.Run("Validation Tests", func(t *testing.T) {
-		// Test missing name
-		invalidData := map[string]interface{}{
-			"server_url": "https://api.test.com",
-			"api_key":    "test-key",
-			"is_default": false,
-		}
+	// Clean up any existing test data
+	collection := client.Database("test_zurabase").Collection("llm_profiles")
+	_, _ = collection.DeleteMany(context.Background(), bson.M{"user_id": "test-api-user"})
 
-		jsonData, _ := json.Marshal(invalidData)
-		req, err := http.NewRequest("POST", server.URL+"/api/llm-profiles", bytes.NewBuffer(jsonData))
-		if err != nil {
-			t.Fatalf("Failed to create request: %v", err)
-		}
-		req.Header.Set("Content-Type", "application/json")
+	// Generate a test token for authentication
+	testUserToken := setupAuth(t, "test-api-user", "test@example.com")
 
-		resp, err := clientHTTP.Do(req)
-		if err != nil {
-			t.Fatalf("Request failed: %v", err)
-		}
-		defer resp.Body.Close()
+	// Set up test router
+	router := server.SetupTestRouter()
 
-		if resp.StatusCode != http.StatusBadRequest {
-			t.Errorf("Expected status 400 for missing name, got %d", resp.StatusCode)
-		}
+	// First create a profile to set as default
+	profileData := map[string]interface{}{
+		"name":       "Test Profile for SetDefault",
+		"server_url": "https://api.test.com",
+		"api_key":    "test-api-key-setdefault",
+		"is_default": false,
+		"model":      "gpt-3.5-turbo",
+	}
 
-		// Test missing API key
-		invalidData2 := map[string]interface{}{
-			"name":       "Test Profile",
-			"server_url": "https://api.test.com",
-			"is_default": false,
-		}
+	jsonData, _ := json.Marshal(profileData)
+	createReq, err := http.NewRequest("POST", "/api/llm-profiles", bytes.NewBuffer(jsonData))
+	if err != nil {
+		t.Fatalf("Failed to create request: %v", err)
+	}
+	createReq.Header.Set("Content-Type", "application/json")
+	createReq.Header.Set("Authorization", "Bearer "+testUserToken)
 
-		jsonData2, _ := json.Marshal(invalidData2)
-		req2, err := http.NewRequest("POST", server.URL+"/api/llm-profiles", bytes.NewBuffer(jsonData2))
-		if err != nil {
-			t.Fatalf("Failed to create request: %v", err)
-		}
-		req2.Header.Set("Content-Type", "application/json")
+	createRec := httptest.NewRecorder()
+	router.ServeHTTP(createRec, createReq)
 
-		resp2, err := clientHTTP.Do(req2)
-		if err != nil {
-			t.Fatalf("Request failed: %v", err)
-		}
-		defer resp2.Body.Close()
+	if createRec.Code != http.StatusCreated {
+		t.Fatalf("Failed to create profile for set-default test, status: %d, response: %s", createRec.Code, createRec.Body.String())
+	}
 
-		if resp2.StatusCode != http.StatusBadRequest {
-			t.Errorf("Expected status 400 for missing API key, got %d", resp2.StatusCode)
-		}
-	})
+	var createResponse map[string]interface{}
+	err = json.NewDecoder(createRec.Body).Decode(&createResponse)
+	if err != nil {
+		t.Fatalf("Failed to decode create response: %v", err)
+	}
+
+	profile := createResponse["profile"].(map[string]interface{})
+	profileID := profile["id"].(string)
+
+	// Set the profile as default
+	setDefaultReq, err := http.NewRequest("PUT", "/api/llm-profiles/"+profileID+"/set-default", nil)
+	if err != nil {
+		t.Fatalf("Failed to create request: %v", err)
+	}
+	setDefaultReq.Header.Set("Authorization", "Bearer "+testUserToken)
+
+	setDefaultRec := httptest.NewRecorder()
+	router.ServeHTTP(setDefaultRec, setDefaultReq)
+
+	if setDefaultRec.Code != http.StatusOK {
+		t.Errorf("Expected status 200, got %d. Response: %s", setDefaultRec.Code, setDefaultRec.Body.String())
+	}
+
+	var response map[string]interface{}
+	err = json.NewDecoder(setDefaultRec.Body).Decode(&response)
+	if err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	profileResponse := response["profile"].(map[string]interface{})
+	if !profileResponse["is_default"].(bool) {
+		t.Error("Profile should be marked as default after set-default call")
+	}
+}
+
+func TestLLMProfile_API_TestConnection(t *testing.T) {
+	// Set up test environment
+	client := SetupTestMongoClient(context.Background(), t)
+	if client == nil {
+		return
+	}
+	defer client.Disconnect(context.Background())
+
+	// Initialize required packages
+	err := models.InitializeLLMProfiles(client, "test_zurabase")
+	if err != nil {
+		t.Fatalf("Failed to initialize LLM profiles: %v", err)
+	}
+
+	auth.Initialize(client, "test_zurabase")
+	auth.ReloadJWTSecret()
+
+	// Generate a test token for authentication
+	testUserToken := setupAuth(t, "test-api-user", "test@example.com")
+
+	// Set up test router
+	router := server.SetupTestRouter()
+
+	testData := map[string]interface{}{
+		"server_url": "https://api.openai.com",
+		"api_key":    "test-api-key-connection",
+		"model":      "gpt-3.5-turbo",
+	}
+
+	jsonData, _ := json.Marshal(testData)
+	req, err := http.NewRequest("POST", "/api/llm-profiles/test-connection", bytes.NewBuffer(jsonData))
+	if err != nil {
+		t.Fatalf("Failed to create request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+testUserToken)
+
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	// Connection test might fail (since we're using a fake API key), but should return a proper response
+	if rec.Code != http.StatusOK && rec.Code != http.StatusBadRequest {
+		t.Errorf("Expected status 200 or 400, got %d. Response: %s", rec.Code, rec.Body.String())
+	}
+
+	var response map[string]interface{}
+	err = json.NewDecoder(rec.Body).Decode(&response)
+	if err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	if response["success"] == nil {
+		t.Error("Expected success field in response")
+	}
+}
+
+func TestLLMProfile_API_Delete(t *testing.T) {
+	// Set up test environment
+	client := SetupTestMongoClient(context.Background(), t)
+	if client == nil {
+		return
+	}
+	defer client.Disconnect(context.Background())
+
+	// Initialize required packages
+	err := models.InitializeLLMProfiles(client, "test_zurabase")
+	if err != nil {
+		t.Fatalf("Failed to initialize LLM profiles: %v", err)
+	}
+
+	auth.Initialize(client, "test_zurabase")
+	auth.ReloadJWTSecret()
+
+	// Clean up any existing test data
+	collection := client.Database("test_zurabase").Collection("llm_profiles")
+	_, _ = collection.DeleteMany(context.Background(), bson.M{"user_id": "test-api-user"})
+
+	// Generate a test token for authentication
+	testUserToken := setupAuth(t, "test-api-user", "test@example.com")
+
+	// Set up test router
+	router := server.SetupTestRouter()
+
+	// First create a profile to delete
+	profileData := map[string]interface{}{
+		"name":       "Test Profile for Delete",
+		"server_url": "https://api.test.com",
+		"api_key":    "test-api-key-delete",
+		"is_default": true,
+		"model":      "gpt-3.5-turbo",
+	}
+
+	jsonData, _ := json.Marshal(profileData)
+	createReq, err := http.NewRequest("POST", "/api/llm-profiles", bytes.NewBuffer(jsonData))
+	if err != nil {
+		t.Fatalf("Failed to create request: %v", err)
+	}
+	createReq.Header.Set("Content-Type", "application/json")
+	createReq.Header.Set("Authorization", "Bearer "+testUserToken)
+
+	createRec := httptest.NewRecorder()
+	router.ServeHTTP(createRec, createReq)
+
+	if createRec.Code != http.StatusCreated {
+		t.Fatalf("Failed to create profile for delete test, status: %d, response: %s", createRec.Code, createRec.Body.String())
+	}
+
+	var createResponse map[string]interface{}
+	err = json.NewDecoder(createRec.Body).Decode(&createResponse)
+	if err != nil {
+		t.Fatalf("Failed to decode create response: %v", err)
+	}
+
+	profile := createResponse["profile"].(map[string]interface{})
+	profileID := profile["id"].(string)
+
+	// Now delete the profile
+	deleteReq, err := http.NewRequest("DELETE", "/api/llm-profiles/"+profileID, nil)
+	if err != nil {
+		t.Fatalf("Failed to create request: %v", err)
+	}
+	deleteReq.Header.Set("Authorization", "Bearer "+testUserToken)
+
+	deleteRec := httptest.NewRecorder()
+	router.ServeHTTP(deleteRec, deleteReq)
+
+	if deleteRec.Code != http.StatusNoContent {
+		t.Errorf("Expected status 204, got %d. Response: %s", deleteRec.Code, deleteRec.Body.String())
+	}
+
+	// Verify the profile was actually deleted by trying to get it again
+	getAfterDeleteReq, err := http.NewRequest("GET", "/api/llm-profiles/"+profileID, nil)
+	if err != nil {
+		t.Fatalf("Failed to create request: %v", err)
+	}
+	getAfterDeleteReq.Header.Set("Authorization", "Bearer "+testUserToken)
+
+	getAfterDeleteRec := httptest.NewRecorder()
+	router.ServeHTTP(getAfterDeleteRec, getAfterDeleteReq)
+
+	// Should get 404 after deletion
+	if getAfterDeleteRec.Code != http.StatusNotFound {
+		t.Errorf("Expected status 404 after deletion, got %d. Response: %s", getAfterDeleteRec.Code, getAfterDeleteRec.Body.String())
+	}
+}
+
+func TestLLMProfile_API_Validation(t *testing.T) {
+	// Set up test environment
+	client := SetupTestMongoClient(context.Background(), t)
+	if client == nil {
+		return
+	}
+	defer client.Disconnect(context.Background())
+
+	// Initialize required packages
+	err := models.InitializeLLMProfiles(client, "test_zurabase")
+	if err != nil {
+		t.Fatalf("Failed to initialize LLM profiles: %v", err)
+	}
+
+	auth.Initialize(client, "test_zurabase")
+	auth.ReloadJWTSecret()
+
+	// Generate a test token for authentication
+	testUserToken := setupAuth(t, "test-api-user", "test@example.com")
+
+	// Set up test router
+	router := server.SetupTestRouter()
+
+	// Test missing name
+	invalidData := map[string]interface{}{
+		"server_url": "https://api.test.com",
+		"api_key":    "test-key",
+		"is_default": false,
+		"model":      "gpt-3.5-turbo",
+	}
+
+	jsonData, _ := json.Marshal(invalidData)
+	req, err := http.NewRequest("POST", "/api/llm-profiles", bytes.NewBuffer(jsonData))
+	if err != nil {
+		t.Fatalf("Failed to create request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+testUserToken)
+
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("Expected status 400 for missing name, got %d. Response: %s", rec.Code, rec.Body.String())
+	}
+
+	// Test missing API key
+	invalidData2 := map[string]interface{}{
+		"name":       "Test Profile",
+		"server_url": "https://api.test.com",
+		"is_default": false,
+		"model":      "gpt-3.5-turbo",
+	}
+
+	jsonData2, _ := json.Marshal(invalidData2)
+	req2, err := http.NewRequest("POST", "/api/llm-profiles", bytes.NewBuffer(jsonData2))
+	if err != nil {
+		t.Fatalf("Failed to create request: %v", err)
+	}
+	req2.Header.Set("Content-Type", "application/json")
+	req2.Header.Set("Authorization", "Bearer "+testUserToken)
+
+	rec2 := httptest.NewRecorder()
+	router.ServeHTTP(rec2, req2)
+
+	if rec2.Code != http.StatusBadRequest {
+		t.Errorf("Expected status 400 for missing API key, got %d. Response: %s", rec2.Code, rec2.Body.String())
+	}
 }

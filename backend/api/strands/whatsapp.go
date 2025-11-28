@@ -8,8 +8,8 @@ import (
 	"os"
 	"time"
 
+	"zurabase/internal/models"
 	"zurabase/internal/services"
-	"zurabase/models"
 
 	"github.com/google/uuid"
 )
@@ -82,29 +82,29 @@ func InitializeWhatsApp(ctx context.Context) error {
 		go func() {
 			// Create a background context for the WhatsApp processing
 			bgCtx := context.Background()
-			
+
 			// Create strand
 			strand := &models.Strand{
-				ID:        uuid.New().String(),
-				UserID:    from,
-				Content:   text,
-				Source:    "whatsapp",
-				Tags:      []string{"whatsapp", "text"},
-				CreatedAt: time.Now(),
-				UpdatedAt: time.Now(),
+				ID:           uuid.New().String(),
+				UserID:       from,
+				Content:      text,
+				Source:       "whatsapp",
+				Tags:         []string{"whatsapp", "text"},
+				CreatedAt:    time.Now(),
+				UpdatedAt:    time.Now(),
 				SyncedWithAI: false,
 			}
-			
+
 			// Generate basic summary
 			strand.Summary = generateBasicSummary(text)
-			
+
 			// Save the strand immediately
 			savedStrand, err := models.SaveStrand(bgCtx, strand)
 			if err != nil {
 				log.Printf("Error saving WhatsApp strand: %v", err)
 				return
 			}
-			
+
 			// Enrich with AI in background
 			go func() {
 				result := enrichStrandWithAI(bgCtx, savedStrand)
@@ -186,13 +186,13 @@ func processWhatsAppMessage(ctx context.Context, message WhatsAppMessage) {
 
 				// Create a new strand
 				strand := &models.Strand{
-					ID:        uuid.New().String(),
-					UserID:    userID,
-					Content:   content,
-					Source:    "whatsapp",
-					Tags:      []string{"whatsapp", mediaType},
-					CreatedAt: time.Now(),
-					UpdatedAt: time.Now(),
+					ID:           uuid.New().String(),
+					UserID:       userID,
+					Content:      content,
+					Source:       "whatsapp",
+					Tags:         []string{"whatsapp", mediaType},
+					CreatedAt:    time.Now(),
+					UpdatedAt:    time.Now(),
 					SyncedWithAI: false,
 				}
 

@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"zurabase/internal/services"
-	"zurabase/models"
+	"zurabase/internal/models"
 
 	"github.com/google/uuid"
 )
@@ -28,37 +28,45 @@ func Initialize() error {
 // It strictly attempts to create a LangChainClient. If the profile is invalid or
 // LangChainClient creation fails, it returns an error.
 func getAIClientForUser(ctx context.Context, userID string) (services.LLMClient, error) {
-	log.Printf("🔍 getAIClientForUser: Starting LLM client resolution for user %s", userID)
+	log.Printf("[DEBUG] getAIClientForUser: Starting LLM client resolution for user %s", userID)
 
 	// Get user's default LLM profile
 	profile, err := models.GetDefaultLLMProfile(ctx, userID)
 	if err != nil {
-		log.Printf("❌ getAIClientForUser: Failed to get LLM profile for user %s: %v", userID, err)
+		log.Printf("[ERROR] getAIClientForUser: Failed to get LLM profile for user %s: %v", userID, err)
 		return nil, fmt.Errorf("failed to get LLM profile: %w", err)
 	}
 
 	if profile == nil {
-		log.Printf("❌ getAIClientForUser: No default LLM profile found for user %s", userID)
-		return nil, fmt.Errorf("no default LLM profile found for user %s")
+		log.Printf("[ERROR] getAIClientForUser: No default LLM profile found for user %s", userID)
+		return nil, fmt.Errorf("no default LLM profile found for user %s", userID)
 	}
 
-	log.Printf("🔍 getAIClientForUser: Retrieved profile '%s' (ID: %s) for user %s", profile.Name, profile.ID, userID)
-	log.Printf("🔍 getAIClientForUser: Profile validation - ServerURL: %s, APIKey present: %v", profile.ServerURL, profile.APIKey != "")
+	log.Printf("[DEBUG] getAIClientForUser: Retrieved profile '%s' (ID: %s) for user %s", profile.Name, profile.ID, userID)
+	log.Printf("[DEBUG] getAIClientForUser: Profile details - ServerURL: '%s', Model: '%s', APIKey present: %v, IsDefault: %v",
+		profile.ServerURL, profile.Model, profile.APIKey != "", profile.IsDefault)
 
 	if profile.ServerURL == "" || profile.APIKey == "" {
-		log.Printf("❌ getAIClientForUser: Invalid LLM profile configuration for user %s - ServerURL: %s, APIKey present: %v",
+		log.Printf("[ERROR] getAIClientForUser: Invalid LLM profile configuration for user %s - ServerURL: '%s', APIKey present: %v",
 			userID, profile.ServerURL, profile.APIKey != "")
 		return nil, fmt.Errorf("invalid LLM profile configuration for user %s", userID)
 	}
 
+	if profile.Model == "" {
+		log.Printf("[ERROR] getAIClientForUser: No model specified in LLM profile for user %s", userID)
+		return nil, fmt.Errorf("no model specified in LLM profile for user %s", userID)
+	}
+
 	// Attempt to create a LangChain client
+	log.Printf("[DEBUG] getAIClientForUser: Creating LangChain client with ServerURL='%s', Model='%s'", profile.ServerURL, profile.Model)
 	langChainClient, err := services.NewLangChainClient(profile)
 	if err != nil {
-		log.Printf("❌ getAIClientForUser: Failed to create LangChain client for user %s: %v", userID, err)
+		log.Printf("[ERROR] getAIClientForUser: Failed to create LangChain client for user %s: %v", userID, err)
+		log.Printf("[ERROR] getAIClientForUser: Profile details that failed - ServerURL: '%s', Model: '%s'", profile.ServerURL, profile.Model)
 		return nil, fmt.Errorf("failed to create LangChain client: %w", err)
 	}
 
-	log.Printf("✅ getAIClientForUser: Successfully created LangChain client for user %s", userID)
+	log.Printf("[DEBUG] getAIClientForUser: Successfully created LangChain client for user %s", userID)
 	return langChainClient, nil
 }
 
@@ -244,11 +252,11 @@ func HandleCreateStrand(w http.ResponseWriter, r *http.Request) {
 // enrichStrandWithAI processes a strand with AI in the background
 // This is called asynchronously to avoid blocking the user response
 func enrichStrandWithAI(ctx context.Context, strand *models.Strand) EnrichmentResult {
-	log.Printf("🔍 enrichStrandWithAI: Starting AI enrichment for strand %s (user: %s)", strand.ID, strand.UserID)
+	log.Printf("[DEBUG] enrichStrandWithAI: Starting AI enrichment for strand %s (user: %s)", strand.ID, strand.UserID)
 
 	userAIClient, err := getAIClientForUser(ctx, strand.UserID)
 	if err != nil {
-		log.Printf("❌ enrichStrandWithAI: AI client unavailable for strand %s: %v", strand.ID, err)
+		log.Printf("[ERROR] enrichStrandWithAI: AI client unavailable for strand %s: %v", strand.ID, err)
 		strand.SyncedWithAI = false
 		strand.AIStatus = "failed"
 		strand.AIFailureReason = err.Error()
@@ -256,17 +264,19 @@ func enrichStrandWithAI(ctx context.Context, strand *models.Strand) EnrichmentRe
 		return EnrichmentResult{StrandID: strand.ID, Success: false, Error: err.Error()}
 	}
 
-	log.Printf("✅ enrichStrandWithAI: AI client successfully obtained for strand %s", strand.ID)
+	log.Printf("[DEBUG] enrichStrandWithAI: AI client successfully obtained for strand %s", strand.ID)
 
 	userTagService := services.NewTagService(userAIClient)
 	if userTagService == nil {
-		log.Printf("⚠️ Failed to create tag service for strand %s", strand.ID)
+		log.Printf("[ERROR] enrichStrandWithAI: Failed to create tag service for strand %s", strand.ID)
 		strand.SyncedWithAI = false
 		strand.AIStatus = "failed"
 		strand.AIFailureReason = "Failed to create tag service"
 		models.SaveStrand(ctx, strand)
 		return EnrichmentResult{StrandID: strand.ID, Success: false, Error: "Failed to create tag service"}
 	}
+
+	log.Printf("[DEBUG] enrichStrandWithAI: Tag service created successfully for strand %s", strand.ID)
 
 	// Set AI status to processing before starting AI analysis
 	strand.AIStatus = "processing"
@@ -276,12 +286,13 @@ func enrichStrandWithAI(ctx context.Context, strand *models.Strand) EnrichmentRe
 	aiCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
+	log.Printf("[DEBUG] enrichStrandWithAI: Starting AI analysis for strand %s (content length: %d)", strand.ID, len(strand.Content))
 	resp, err := userAIClient.AnalyzeContent(aiCtx, &services.AnalysisRequest{
 		Content: strand.Content,
 		Source:  strand.Source,
 	})
 	if err != nil {
-		log.Printf("❌ AI analysis failed for strand %s: %v", strand.ID, err)
+		log.Printf("[ERROR] enrichStrandWithAI: AI analysis failed for strand %s: %v", strand.ID, err)
 		strand.SyncedWithAI = false
 		strand.AIStatus = "failed"
 		strand.AIFailureReason = err.Error()
@@ -290,7 +301,7 @@ func enrichStrandWithAI(ctx context.Context, strand *models.Strand) EnrichmentRe
 	}
 
 	if resp == nil {
-		log.Printf("❌ AI returned nil response for strand %s", strand.ID)
+		log.Printf("[ERROR] enrichStrandWithAI: AI returned nil response for strand %s", strand.ID)
 		strand.SyncedWithAI = false
 		strand.AIStatus = "failed"
 		strand.AIFailureReason = "AI response nil"
@@ -299,7 +310,7 @@ func enrichStrandWithAI(ctx context.Context, strand *models.Strand) EnrichmentRe
 	}
 
 	// Debug logging for AI response
-	log.Printf("✅ AI analysis successful for strand %s: %d tags, summary: %s",
+	log.Printf("[DEBUG] enrichStrandWithAI: AI analysis successful for strand %s: %d tags, summary: %s",
 		strand.ID, len(resp.Tags), resp.Summary)
 
 	// Apply enrichment directly
@@ -325,7 +336,7 @@ func enrichStrandWithAI(ctx context.Context, strand *models.Strand) EnrichmentRe
 	strand.SyncHistory = append(strand.SyncHistory, syncLog)
 
 	models.SaveStrand(ctx, strand)
-	log.Printf("✅ Strand %s successfully synced with AI at %s", strand.ID, strand.UpdatedAt.Format(time.RFC3339))
+	log.Printf("[DEBUG] enrichStrandWithAI: Strand %s successfully synced with AI at %s", strand.ID, strand.UpdatedAt.Format(time.RFC3339))
 
 	return EnrichmentResult{StrandID: strand.ID, Success: true}
 }

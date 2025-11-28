@@ -365,7 +365,9 @@ export async function addCard(
         updated_at: new Date().toISOString(),
       };
     }
-    throw new Error(await response.text());
+    const errorText = await response.text();
+    console.error(`[API] addCard failed: ${response.status} - ${errorText}`);
+    throw new Error(errorText);
   }
 
   return await response.json();
@@ -514,7 +516,9 @@ export async function moveCard(
         updated_at: new Date().toISOString(),
       };
     }
-    throw new Error(await response.text());
+    const errorText = await response.text();
+    console.error(`[API] moveCard failed: ${response.status} - ${errorText}`);
+    throw new Error(errorText);
   }
 
   return await response.json();

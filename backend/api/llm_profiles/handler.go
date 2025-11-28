@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"net/url" // Add net/url import
-	"zurabase/models"
+	"zurabase/internal/models"
 
 	"github.com/google/uuid"
 )

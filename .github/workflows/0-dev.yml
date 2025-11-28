@@ -156,6 +156,6 @@ jobs:
         if: success() || failure()  # Produce test report, pass or fail
         with:
           name: Test Results # Name of the check run which will be created
-          path: "**/test-results/*.xml" # Path to test results
+          path: "/tmp/test-results/*.xml" # Updated path for test results
           reporter: jest-junit # Use jest-junit for frontend tests
           fail-on-error: "false"

@@ -2,9 +2,11 @@ package tests
 
 import (
 	"context"
-	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"testing"
+
+	"zurabase/internal/server"
 )
 
 type Note struct {
@@ -14,27 +16,29 @@ type Note struct {
 }
 
 func saveNote(ctx context.Context, t *testing.T, note *Note) *Note {
-	return doPostRequest[Note, Note](ctx, t, "/note", *note)
+	return DoPostRequest[Note, Note](ctx, t, "/note", *note)
 }
 
 func getNote(ctx context.Context, t *testing.T, id string) *Note {
-	return doGetRequest[Note](ctx, t, "/note/"+id)
+	return DoGetRequest[Note](ctx, t, "/note/"+id)
 }
 
 func deleteNoteByID(ctx context.Context, t *testing.T, id string) {
-	url := fmt.Sprintf("%s/note/%s", getAPIEndpoint(), id)
-	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, nil)
+	router := server.SetupTestRouter()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, "/note/"+id, nil)
 	if err != nil {
 		t.Fatalf("failed to create DELETE request: %v", err)
 	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("failed DELETE request: %v", err)
-	}
-	defer resp.Body.Close()
+	req.Header.Set("Origin", "http://localhost:5173")
+
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	// Don't check status code as DELETE might return 404 for non-existent notes
 }
 
-func TestSaveNote_Success(t *testing.T) {
+func TestNote_SaveSuccess(t *testing.T) {
 	ctx := context.Background()
 	note := &Note{
 		ID:       "test-id-1",
@@ -53,7 +57,7 @@ func TestSaveNote_Success(t *testing.T) {
 	}
 }
 
-func TestGetNote_Success(t *testing.T) {
+func TestNote_GetSuccess(t *testing.T) {
 	ctx := context.Background()
 	testNote := &Note{
 		ID:       "test-id-2",
@@ -73,12 +77,23 @@ func TestGetNote_Success(t *testing.T) {
 	}
 }
 
-func TestGetNote_NotFound(t *testing.T) {
+func TestNote_GetNotFound(t *testing.T) {
 	ctx := context.Background()
 	deleteNoteByID(ctx, t, "non-existent-id")
 
-	got := getNote(ctx, t, "non-existent-id")
-	if got != nil {
-		t.Errorf("expected nil for missing note, got %+v", got)
+	// For a non-existent note, the API should return 404
+	router := server.SetupTestRouter()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "/note/non-existent-id", nil)
+	if err != nil {
+		t.Fatalf("failed to create GET request: %v", err)
+	}
+	req.Header.Set("Origin", "http://localhost:5173")
+
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	// Expect 404 for non-existent note
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected status 404 for non-existent note, got %d", rec.Code)
 	}
 }

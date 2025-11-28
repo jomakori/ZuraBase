@@ -13,6 +13,7 @@ import {
 } from "./api";
 import { PlannerTemplate, Planner, PlannerLane } from "./types";
 import SharingModal from "../components/SharingModal";
+import SaveButton from "../components/SaveButton";
 import { useSaveHandler } from "../utils/saveUtils";
 
 const PlannerApp: React.FC = () => {
@@ -555,24 +556,7 @@ const PlannerApp: React.FC = () => {
             </div>
             {planner && (
               <div className="flex space-x-2">
-                <button
-                  onClick={handleSave}
-                  disabled={saveState === "saving" || saveState === "saved"}
-                  className={`planner-save-button inline-flex items-center px-3 py-2 border ${
-                    saveState === "unsaved"
-                      ? "border-transparent text-white bg-blue-600 hover:bg-blue-700 cursor-pointer"
-                      : saveState === "saving"
-                      ? "border-transparent text-white bg-yellow-500 cursor-wait"
-                      : "border-transparent text-white bg-green-500 cursor-default opacity-75"
-                  } shadow-sm text-sm leading-4 font-medium rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors duration-300`}
-                >
-                  <FloppyDisk size={16} className="mr-2" />
-                  {saveState === "saving"
-                    ? "Saving..."
-                    : saveState === "unsaved"
-                    ? "Save"
-                    : "Saved"}
-                </button>
+                <SaveButton saveState={saveState} onClick={handleSave} />
                 <button
                   onClick={() => setShowSharingModal(true)}
                   className="inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"

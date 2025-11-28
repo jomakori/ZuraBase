@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"strings"
 
-	"zurabase/auth"
+	"zurabase/internal/auth"
 )
 
 // RegisterRoutes registers the LLM profiles API routes with authentication

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"zurabase/models"
+	"zurabase/internal/models"
 
 	"github.com/tmc/langchaingo/llms"
 	"github.com/tmc/langchaingo/llms/openai"

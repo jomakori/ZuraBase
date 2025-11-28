@@ -8,11 +8,11 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"time"
-
 	"net/url"
 	"strings"
-	"zurabase/models"
+	"time"
+
+	"zurabase/internal/models"
 )
 
 // AIClient provides methods to interact with LLM services directly

@@ -36,12 +36,18 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   useEffect(() => {
     const fetchUser = async () => {
       try {
-        const response = await fetch(`${getApiBase()}/auth/user`, {
+        const apiBase = getApiBase();
+        console.log("[Auth] Fetching user from:", `${apiBase}/auth/user`);
+        const response = await fetch(`${apiBase}/auth/user`, {
           credentials: "include",
         });
+        console.log("[Auth] User fetch response status:", response.status);
         if (response.ok) {
           const data = await response.json();
+          console.log("[Auth] User data received:", data);
           setUser(data);
+        } else {
+          console.log("[Auth] User fetch failed with status:", response.status);
         }
       } catch (error) {
         console.error("[Auth] Failed to fetch user:", error);
@@ -53,7 +59,9 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   }, []);
 
   const login = () => {
-    window.location.href = `${getApiBase()}/auth/google`;
+    const loginUrl = `${getApiBase()}/auth/google`;
+    console.log("[Auth] Redirecting to login URL:", loginUrl);
+    window.location.href = loginUrl;
   };
 
   const logout = async () => {

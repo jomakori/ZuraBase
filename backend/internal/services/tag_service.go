@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"zurabase/models"
+	"zurabase/internal/models"
 )
 
 // TagService provides methods for tag management and related content discovery

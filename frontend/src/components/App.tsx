@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from "react";
 import NavBar from "./NavBar";
 import {
-  BrowserRouter as Router,
-  Routes,
-  Route,
+  createBrowserRouter,
+  RouterProvider,
+  Outlet,
   useLocation,
 } from "react-router-dom";
 import StrandsApp from "../strands/StrandsApp";
@@ -14,18 +14,6 @@ import SettingsPage from "./SettingsPage";
 import LoadingSplash from "./LoadingSplash";
 import AIConnectionStatus from "./LLMConnectionStatus";
 import { LLMProfilesProvider } from "../context/LLMProfilesProvider";
-
-/**
- * Main App component that serves as a landing page for the application.
- * It allows users to choose between the Notes and Planner features.
- */
-function App() {
-  return (
-    <Router>
-      <AppContent />
-    </Router>
-  );
-}
 
 // Main content component with loading state
 const AppContent = () => {
@@ -65,17 +53,56 @@ const AppContent = () => {
     <LLMProfilesProvider>
       <div className="min-h-screen bg-gray-50">
         <NavBar currentPage={currentPage} />
-        <Routes>
-          <Route path="/" element={<HomePage />} />
-          <Route path="/notes/*" element={<NotesApp />} />
-          <Route path="/planner/*" element={<PlannerApp />} />
-          <Route path="/strands/*" element={<StrandsApp />} />
-          <Route path="/settings" element={<SettingsPage />} />
-        </Routes>
+        <Outlet />
         <AIConnectionStatus />
       </div>
     </LLMProfilesProvider>
   );
 };
+
+// Create router with v7 future flags
+const router = createBrowserRouter([
+  {
+    path: "/",
+    element: <AppContent />,
+    children: [
+      {
+        index: true,
+        element: <HomePage />,
+      },
+      {
+        path: "notes/*",
+        element: <NotesApp />,
+      },
+      {
+        path: "planner/*",
+        element: <PlannerApp />,
+      },
+      {
+        path: "strands/*",
+        element: <StrandsApp />,
+      },
+      {
+        path: "settings",
+        element: <SettingsPage />,
+      },
+    ],
+  },
+]);
+
+/**
+ * Main App component that serves as a landing page for the application.
+ * It allows users to choose between the Notes and Planner features.
+ */
+function App() {
+  return (
+    <RouterProvider
+      router={router}
+      future={{
+        v7_startTransition: true,
+      }}
+    />
+  );
+}
 
 export default App;

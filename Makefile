@@ -19,7 +19,6 @@ down: clean_compose
 #   │ Test Commands                                                            │
 #   └──────────────────────────────────────────────────────────────────────────┘
 test_be: clean_compose conditional_down
-	chown $$(id -u):$$(id -g) ./test-results									# Address permissions for test-results
 	doppler secrets --config dev_testing && \
 	doppler run --config dev_testing \
 		--mount-template doppler-compose.yml \

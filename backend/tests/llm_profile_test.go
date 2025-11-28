@@ -3,31 +3,28 @@ package tests
 import (
 	"context"
 	"crypto/rand"
-	"encoding/base64"
-	"os"
+	_ "encoding/base64"
 	"testing"
 	"time"
 
 	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
 
-	"zurabase/models"
+	"zurabase/internal/models"
 )
 
-func TestLLMProfileEncryption(t *testing.T) {
+func TestLLMProfile_Encryption(t *testing.T) {
 	// Set up a test encryption key
 	key := make([]byte, 32)
 	_, err := rand.Read(key)
 	if err != nil {
 		t.Fatalf("Failed to generate test key: %v", err)
 	}
-	os.Setenv("LLM_ENCRYPTION_KEY", base64.StdEncoding.EncodeToString(key))
+	SkipIfNoLLMEncryptionKey(t)
 
 	// Initialize models with test database
-	client, err := mongo.Connect(context.Background(), options.Client().ApplyURI(os.Getenv("MONGO_URI")))
-	if err != nil {
-		t.Skipf("MongoDB not available: %v", err)
+	client := SetupTestMongoClient(context.Background(), t)
+	if client == nil {
+		return
 	}
 	defer client.Disconnect(context.Background())
 
@@ -71,15 +68,15 @@ func TestLLMProfileEncryption(t *testing.T) {
 	}
 }
 
-func TestLLMProfileCRUD(t *testing.T) {
+func TestLLMProfile_CRUD(t *testing.T) {
 	// Set up test environment
-	client, err := mongo.Connect(context.Background(), options.Client().ApplyURI(os.Getenv("MONGO_URI")))
-	if err != nil {
-		t.Skipf("MongoDB not available: %v", err)
+	client := SetupTestMongoClient(context.Background(), t)
+	if client == nil {
+		return
 	}
 	defer client.Disconnect(context.Background())
 
-	err = models.InitializeLLMProfiles(client, "test_zurabase")
+	err := models.InitializeLLMProfiles(client, "test_zurabase")
 	if err != nil {
 		t.Fatalf("Failed to initialize LLM profiles: %v", err)
 	}
@@ -97,6 +94,7 @@ func TestLLMProfileCRUD(t *testing.T) {
 		Name:      "Test CRUD Profile",
 		ServerURL: "https://api.test.com",
 		APIKey:    "test-api-key-crud",
+		Model:     "gpt-4",
 		IsDefault: false,
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
@@ -176,52 +174,65 @@ func TestLLMProfileCRUD(t *testing.T) {
 	}
 }
 
-func TestLLMProfileValidation(t *testing.T) {
-	client, err := mongo.Connect(context.Background(), options.Client().ApplyURI(os.Getenv("MONGO_URI")))
-	if err != nil {
-		t.Skipf("MongoDB not available: %v", err)
+func TestLLMProfile_Validation(t *testing.T) {
+	client := SetupTestMongoClient(context.Background(), t)
+	if client == nil {
+		return
 	}
 	defer client.Disconnect(context.Background())
 
-	err = models.InitializeLLMProfiles(client, "test_zurabase")
+	err := models.InitializeLLMProfiles(client, "test_zurabase")
 	if err != nil {
 		t.Fatalf("Failed to initialize LLM profiles: %v", err)
 	}
 
 	ctx := context.Background()
 
-	// Test empty API key handling
+	// Test empty API key handling - should fail encryption
 	profile := &models.LLMProfile{
 		ID:        "test-empty-key",
 		UserID:    "test-user",
 		Name:      "Test Empty Key",
 		ServerURL: "https://api.test.com",
 		APIKey:    "", // Empty API key
+		Model:     "gpt-4",
 		IsDefault: false,
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
 	}
 
 	_, err = models.SaveLLMProfile(ctx, profile)
+	if err == nil {
+		t.Fatalf("Expected error when saving profile with empty API key, but got none")
+	}
+
+	expectedError := "failed to encrypt API key: API key cannot be empty before encryption"
+	if err.Error() != expectedError {
+		t.Errorf("Expected error '%s', got '%v'", expectedError, err)
+	}
+
+	// Test with a valid API key
+	profile.APIKey = "valid-api-key"
+	_, err = models.SaveLLMProfile(ctx, profile)
 	if err != nil {
-		t.Fatalf("Failed to save profile with empty API key: %v", err)
+		t.Fatalf("Failed to save profile with valid API key: %v", err)
 	}
 
 	// Verify the profile can be retrieved and decrypted
 	retrievedProfile, err := models.GetLLMProfile(ctx, profile.ID)
 	if err != nil {
-		t.Fatalf("Failed to get profile with empty API key: %v", err)
+		t.Fatalf("Failed to get profile: %v", err)
 	}
 
-	if retrievedProfile.APIKey != "" {
-		t.Errorf("Expected empty API key, got %s", retrievedProfile.APIKey)
+	if retrievedProfile.APIKey != "valid-api-key" {
+		t.Errorf("Expected API key 'valid-api-key', got %s", retrievedProfile.APIKey)
 	}
 
 	// Clean up
 	_ = models.DeleteLLMProfile(ctx, profile.ID)
 }
 
-func TestLLMProfileToResponse(t *testing.T) {
+func TestLLMProfile_ToResponse(t *testing.T) {
 	profile := &models.LLMProfile{
 		ID:        "test-response-id",
 		UserID:    "test-user",

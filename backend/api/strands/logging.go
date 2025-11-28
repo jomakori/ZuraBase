@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"zurabase/internal/services"
+
+	"go.uber.org/zap"
 )
 
 var logger = services.NewLogger("ClientLogs")
@@ -37,16 +39,34 @@ func HandleClientLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Log to backend console with [CLIENT] prefix
+	// Create structured fields for the log entry
+	fields := []zap.Field{
+		zap.String("source", "client"),
+		zap.String("user_agent", logEntry.UserAgent),
+		zap.String("url", logEntry.URL),
+		zap.Time("client_timestamp", logEntry.Timestamp),
+	}
+
+	// Add stack trace for errors
+	if logEntry.Stack != "" {
+		fields = append(fields, zap.String("stack", logEntry.Stack))
+	}
+
+	// Add context fields
+	for key, value := range logEntry.Context {
+		fields = append(fields, zap.Any(key, value))
+	}
+
+	// Log to backend console with structured fields
 	switch logEntry.Level {
 	case "error":
-		logger.Error("[CLIENT] ERROR: %s | URL: %s | Stack: %s", logEntry.Message, logEntry.URL, logEntry.Stack)
+		logger.Error("Client error", fields...)
 	case "warn":
-		logger.Warn("[CLIENT] WARN: %s | URL: %s", logEntry.Message, logEntry.URL)
+		logger.Warn("Client warning", fields...)
 	case "info":
-		logger.Info("[CLIENT] INFO: %s", logEntry.Message)
+		logger.Info("Client info", fields...)
 	default:
-		logger.Debug("[CLIENT] DEBUG: %s", logEntry.Message)
+		logger.Debug("Client debug", fields...)
 	}
 
 	// Return success

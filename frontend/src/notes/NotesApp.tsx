@@ -8,6 +8,7 @@ import CoverSelector from "../components/CoverSelector";
 import MarkdownEditor from "../components/MarkdownEditor";
 import SharingModal from "../components/SharingModal";
 import { useSaveHandler } from "../utils/saveUtils";
+import SaveButton from "../components/SaveButton";
 
 interface NotesAppProps {
   onInit?: () => void;
@@ -169,6 +170,12 @@ After saving the document you will get a link that you can share.
 
   // Update save state when relevant states change
   useEffect(() => {
+    console.log("[NotesApp] Save State Effect:", {
+      isSaving,
+      hasUnsavedChanges,
+      lastSaved,
+      currentSaveState: saveState,
+    });
     if (isSaving) {
       setSaveState("saving");
     } else if (hasUnsavedChanges) {
@@ -230,26 +237,7 @@ After saving the document you will get a link that you can share.
       </main>
 
       <div className="fixed bottom-5 right-5 flex items-center space-x-4">
-        <button
-          onClick={handleSave}
-          disabled={saveState === "saving" || saveState === "saved"}
-          className={`save-button flex items-center space-x-2 rounded px-3 py-2 text-sm font-medium ${
-            saveState === "unsaved"
-              ? "bg-blue-600 text-white hover:bg-blue-700 cursor-pointer"
-              : saveState === "saving"
-              ? "bg-yellow-500 text-white cursor-wait"
-              : "bg-green-500 text-white cursor-default opacity-75"
-          } focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors duration-300`}
-        >
-          <FloppyDisk size={16} />
-          <span>
-            {saveState === "saving"
-              ? "Saving..."
-              : saveState === "unsaved"
-              ? "Save"
-              : "Saved"}
-          </span>
-        </button>
+        <SaveButton saveState={saveState} onClick={handleSave} />
       </div>
 
       <SharingModal open={showSharingModal} setOpen={setShowSharingModal} />
