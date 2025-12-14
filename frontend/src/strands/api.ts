@@ -6,6 +6,7 @@ import {
   StrandQueryParams,
   SyncResponse,
   SyncLog,
+  FileAttachment,
 } from "./types";
 import { handleAuthError } from "../utils/authRefresh";
 import { log as logger } from "../utils/clientLogger";
@@ -103,15 +104,16 @@ export const StrandsApi = {
       return data;
     } catch (err) {
       if (err instanceof TypeError && err.message.includes("Failed to fetch")) {
-        logger.warn(
-          MODULE,
-          "Network error detected, server might be unavailable"
-        );
+        logger.warn("Network error detected, server might be unavailable", {
+          component: MODULE,
+        });
       } else if (
         err instanceof TypeError &&
         err.message.includes("net::ERR_CONNECTION_REFUSED")
       ) {
-        logger.warn(MODULE, "Connection refused, server might be restarting");
+        logger.warn("Connection refused, server might be restarting", {
+          component: MODULE,
+        });
         await new Promise((resolve) => setTimeout(resolve, 2000));
       }
       logger.apiError(MODULE, "GET", `${API_BASE}/strands/${id}`, err as Error);
@@ -199,8 +201,8 @@ export const StrandsApi = {
     } catch (err) {
       if (err instanceof TypeError && err.message.includes("Failed to fetch")) {
         logger.warn(
-          MODULE,
-          "Network error during strand update, server might be unavailable"
+          "Network error during strand update, server might be unavailable",
+          { component: MODULE }
         );
       }
       logger.apiError(MODULE, "PUT", `${API_BASE}/strands/${id}`, err as Error);
@@ -291,8 +293,8 @@ export const StrandsApi = {
     } catch (err) {
       if (err instanceof TypeError && err.message.includes("Failed to fetch")) {
         logger.warn(
-          MODULE,
-          "Network error during strand sync, server might be unavailable"
+          "Network error during strand sync, server might be unavailable",
+          { component: MODULE }
         );
       }
       logger.apiError(
@@ -396,14 +398,118 @@ export const StrandsApi = {
     } catch (err) {
       if (err instanceof TypeError && err.message.includes("Failed to fetch")) {
         logger.warn(
-          MODULE,
-          "Network error during rollback, server might be unavailable"
+          "Network error during rollback, server might be unavailable",
+          { component: MODULE }
         );
       }
       logger.apiError(
         MODULE,
         "POST",
         `${API_BASE}/strands/${strandId}/rollback`,
+        err as Error
+      );
+      throw err;
+    }
+  },
+
+  /**
+   * Upload files to a strand
+   * @param strandId The ID of the strand to upload files to
+   * @param files The files to upload
+   * @param onProgress Optional progress callback
+   * @returns Promise with the uploaded attachments
+   */
+  async uploadFiles(
+    strandId: string,
+    files: File[],
+    onProgress?: (progress: number) => void
+  ): Promise<FileAttachment[]> {
+    try {
+      const url = `${API_BASE}/strands/${strandId}/upload`;
+      logger.apiRequest(MODULE, "POST", url, { fileCount: files.length });
+
+      const formData = new FormData();
+      files.forEach((file) => {
+        formData.append("files", file);
+      });
+
+      const response = await fetch(url, {
+        method: "POST",
+        credentials: "include",
+        body: formData,
+      });
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          await handleAuthError(response.status);
+        }
+
+        const errorText = await response.text();
+        logger.apiResponse(MODULE, "POST", url, response.status, {
+          error: errorText,
+        });
+        throw new Error(
+          `Failed to upload files: ${response.status} ${
+            response.statusText
+          } - ${errorText || "No response body"}`
+        );
+      }
+
+      const data = await response.json();
+      logger.apiResponse(MODULE, "POST", url, response.status, data);
+      return data.attachments || [];
+    } catch (err) {
+      logger.apiError(
+        MODULE,
+        "POST",
+        `${API_BASE}/strands/${strandId}/upload`,
+        err as Error
+      );
+      throw err;
+    }
+  },
+
+  /**
+   * Delete an attachment from a strand
+   * @param strandId The ID of the strand
+   * @param attachmentId The ID of the attachment to delete
+   * @returns Promise that resolves when the attachment is deleted
+   */
+  async deleteAttachment(
+    strandId: string,
+    attachmentId: string
+  ): Promise<void> {
+    try {
+      const url = `${API_BASE}/strands/${strandId}/attachments/${attachmentId}`;
+      logger.apiRequest(MODULE, "DELETE", url);
+
+      const response = await fetch(url, {
+        method: "DELETE",
+        credentials: "include",
+      });
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          await handleAuthError(response.status);
+        }
+
+        const errorText = await response.text();
+        logger.apiResponse(MODULE, "DELETE", url, response.status, {
+          error: errorText,
+        });
+        throw new Error(
+          `Failed to delete attachment: ${response.status} ${
+            response.statusText
+          } - ${errorText || "No response body"}`
+        );
+      }
+
+      logger.apiResponse(MODULE, "DELETE", url, response.status);
+    } catch (err) {
+      logger.apiError(
+        MODULE,
+        "DELETE",
+        `${API_BASE}/strands/${strandId}/attachments/${attachmentId}`,
         err as Error
       );
       throw err;

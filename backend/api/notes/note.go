@@ -2,10 +2,11 @@ package notes
 
 import (
 	"context"
-	"log"
 	"time"
 
 	"strings"
+
+	"zurabase/internal/services"
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -51,7 +52,11 @@ func Initialize(client *mongo.Client, dbName string) {
 
 // SaveNote saves or updates a note in the database
 func SaveNote(ctx context.Context, note *Note, userID string) (*Note, error) {
-	log.Printf("SaveNote: saving note with ID=%s for user=%s", note.ID, userID)
+	logger := services.GetLoggerFromContext(ctx, "notes")
+	logger.Info("SaveNote: saving note",
+		services.String("note_id", note.ID),
+		services.String("user_id", userID),
+	)
 	
 	if userID != "" {
 		note.UserID = userID
@@ -79,7 +84,10 @@ func SaveNote(ctx context.Context, note *Note, userID string) (*Note, error) {
 
 	_, err := noteCollection.UpdateOne(ctx, filter, update, opts)
 	if err != nil {
-		log.Printf("SaveNote: error saving note: %v", err)
+		logger.Error("SaveNote: error saving note",
+			services.Error(err),
+			services.String("note_id", note.ID),
+		)
 		return nil, err
 	}
 	return note, nil
@@ -87,19 +95,28 @@ func SaveNote(ctx context.Context, note *Note, userID string) (*Note, error) {
 
 // GetNote retrieves a note by ID
 func GetNote(ctx context.Context, id string) (*Note, error) {
+	logger := services.GetLoggerFromContext(ctx, "notes")
 	var note Note
 	err := noteCollection.FindOne(ctx, bson.M{"id": id}).Decode(&note)
 	if err != nil {
-		log.Printf("GetNote: error retrieving note ID=%s: %v", id, err)
+		logger.Error("GetNote: error retrieving note",
+			services.Error(err),
+			services.String("note_id", id),
+		)
 		return nil, err
 	}
-	log.Printf("GetNote: retrieved note with ID=%s", note.ID)
+	logger.Debug("GetNote: retrieved note",
+		services.String("note_id", note.ID),
+	)
 	return &note, nil
 }
 
 // DeleteNote deletes a note by ID
 func DeleteNote(ctx context.Context, id string) error {
-	log.Printf("DeleteNote: deleting note ID=%s", id)
+	logger := services.GetLoggerFromContext(ctx, "notes")
+	logger.Info("DeleteNote: deleting note",
+		services.String("note_id", id),
+	)
 	_, err := noteCollection.DeleteOne(ctx, bson.M{"id": id})
 	return err
 }

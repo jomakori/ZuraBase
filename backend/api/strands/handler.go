@@ -4,14 +4,17 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
-	"zurabase/internal/services"
 	"zurabase/internal/models"
+	"zurabase/internal/services"
 
 	"github.com/google/uuid"
 )
@@ -105,9 +108,10 @@ func autoSyncUnsyncedStrands() {
 
 // StrandRequest represents a request to create or update a strand
 type StrandRequest struct {
-	Content string   `json:"content"`
-	Source  string   `json:"source"`
-	Tags    []string `json:"tags,omitempty"`
+	Content     string   `json:"content"`
+	Source      string   `json:"source"`
+	Tags        []string `json:"tags,omitempty"`
+	Attachments []string `json:"attachments,omitempty"` // List of attachment IDs to associate
 }
 
 // StrandResponse represents the response for a strand operation
@@ -249,12 +253,69 @@ func HandleCreateStrand(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// hasMediaContent checks if a strand contains media attachments
+func hasMediaContent(strand *models.Strand) bool {
+	if len(strand.Attachments) == 0 {
+		return false
+	}
+
+	// Define media MIME types
+	mediaTypes := []string{
+		"image/",
+		"video/",
+		"audio/",
+	}
+
+	for _, attachment := range strand.Attachments {
+		for _, mediaType := range mediaTypes {
+			if strings.HasPrefix(attachment.MimeType, mediaType) {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// getAIClientForStrand creates an LLM client for a strand, using media-optimized profile if needed
+func getAIClientForStrand(ctx context.Context, strand *models.Strand) (services.LLMClient, error) {
+	// Check if strand has media content
+	if hasMediaContent(strand) {
+		log.Printf("[DEBUG] getAIClientForStrand: Strand %s has media content, using media-optimized LLM profile", strand.ID)
+		
+		// Get media-optimized LLM profile
+		mediaProfile, err := models.GetMediaOptimizedLLMProfile(ctx, strand.UserID)
+		if err != nil {
+			log.Printf("[WARN] getAIClientForStrand: Failed to get media-optimized LLM profile for strand %s: %v", strand.ID, err)
+			log.Printf("[DEBUG] getAIClientForStrand: Falling back to default LLM profile for strand %s", strand.ID)
+			// Fall back to default profile
+			return getAIClientForUser(ctx, strand.UserID)
+		}
+
+		// Create LangChain client with media-optimized profile
+		langChainClient, err := services.NewLangChainClient(mediaProfile)
+		if err != nil {
+			log.Printf("[ERROR] getAIClientForStrand: Failed to create LangChain client with media-optimized profile for strand %s: %v", strand.ID, err)
+			log.Printf("[DEBUG] getAIClientForStrand: Falling back to default LLM profile for strand %s", strand.ID)
+			// Fall back to default profile
+			return getAIClientForUser(ctx, strand.UserID)
+		}
+
+		log.Printf("[DEBUG] getAIClientForStrand: Successfully created media-optimized LLM client for strand %s with model: %s", strand.ID, mediaProfile.Model)
+		return langChainClient, nil
+	}
+
+	// No media content, use default profile
+	log.Printf("[DEBUG] getAIClientForStrand: Strand %s has no media content, using default LLM profile", strand.ID)
+	return getAIClientForUser(ctx, strand.UserID)
+}
+
 // enrichStrandWithAI processes a strand with AI in the background
 // This is called asynchronously to avoid blocking the user response
 func enrichStrandWithAI(ctx context.Context, strand *models.Strand) EnrichmentResult {
 	log.Printf("[DEBUG] enrichStrandWithAI: Starting AI enrichment for strand %s (user: %s)", strand.ID, strand.UserID)
 
-	userAIClient, err := getAIClientForUser(ctx, strand.UserID)
+	userAIClient, err := getAIClientForStrand(ctx, strand)
 	if err != nil {
 		log.Printf("[ERROR] enrichStrandWithAI: AI client unavailable for strand %s: %v", strand.ID, err)
 		strand.SyncedWithAI = false
@@ -320,13 +381,36 @@ func enrichStrandWithAI(ctx context.Context, strand *models.Strand) EnrichmentRe
 	strand.AIStatus = "completed"
 	strand.UpdatedAt = time.Now()
 
+	// Check if we used a media-optimized model override
+	modelOverride := false
+	modelUsed := ""
+	overrideReason := ""
+	
+	// Check if strand has media content and we used a media-optimized model
+	if hasMediaContent(strand) {
+		// Get the media-optimized profile to check if we used it
+		mediaProfile, err := models.GetMediaOptimizedLLMProfile(ctx, strand.UserID)
+		if err == nil && mediaProfile != nil {
+			// Check if we're actually using the media-optimized profile
+			defaultProfile, _ := models.GetDefaultLLMProfile(ctx, strand.UserID)
+			if defaultProfile != nil && mediaProfile.ID != defaultProfile.ID {
+				modelOverride = true
+				modelUsed = mediaProfile.Model
+				overrideReason = "Media content detected - using media-optimized model"
+			}
+		}
+	}
+
 	// Add sync log entry for frontend detection
 	syncLog := models.SyncLog{
-		Timestamp:  time.Now(),
-		Summary:    resp.Summary,
-		Tags:       resp.Tags,
-		SyncedByAI: true,
-		Notes:      "Automatic AI enrichment",
+		Timestamp:      time.Now(),
+		Summary:        resp.Summary,
+		Tags:           resp.Tags,
+		SyncedByAI:     true,
+		Notes:          "Automatic AI enrichment",
+		ModelOverride:  modelOverride,
+		ModelUsed:      modelUsed,
+		OverrideReason: overrideReason,
 	}
 
 	// Initialize sync history if nil
@@ -1076,4 +1160,274 @@ func HandleRollbackStrand(w http.ResponseWriter, r *http.Request, id string) {
 		log.Printf("HandleRollbackStrand: error encoding response: %v", err)
 		http.Error(w, `{"error": "failed to encode response"}`, http.StatusInternalServerError)
 	}
+}
+
+// FileUploadRequest represents a request to upload files to a strand
+type FileUploadRequest struct {
+	StrandID string `json:"strand_id"`
+}
+
+// FileUploadResponse represents the response for a file upload operation
+type FileUploadResponse struct {
+	StrandID    string                  `json:"strand_id"`
+	Attachments []models.FileAttachment `json:"attachments"`
+	Error       string                  `json:"error,omitempty"`
+}
+
+// HandleUploadFiles handles POST /strands/:id/upload
+func HandleUploadFiles(w http.ResponseWriter, r *http.Request, strandID string) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("HandleUploadFiles: recovered from panic: %v", r)
+			http.Error(w, `{"error": "internal server error due to panic"}`, http.StatusInternalServerError)
+		}
+	}()
+
+	if r.Method != http.MethodPost {
+		http.Error(w, `{"error": "method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+
+	// Get user ID from context (set by auth middleware)
+	userID, _ := r.Context().Value("user_id").(string)
+	if userID == "" {
+		http.Error(w, `{"error": "unauthorized"}`, http.StatusUnauthorized)
+		return
+	}
+
+	// Get the strand
+	strand, err := models.GetStrand(r.Context(), strandID)
+	if err != nil {
+		log.Printf("HandleUploadFiles: error getting strand %s: %v", strandID, err)
+		http.Error(w, `{"error": "strand not found"}`, http.StatusNotFound)
+		return
+	}
+
+	// Verify ownership
+	if strand.UserID != userID {
+		http.Error(w, `{"error": "unauthorized"}`, http.StatusUnauthorized)
+		return
+	}
+
+	// Parse multipart form with reasonable limits
+	err = r.ParseMultipartForm(32 << 20) // 32 MB max
+	if err != nil {
+		log.Printf("HandleUploadFiles: error parsing multipart form: %v", err)
+		http.Error(w, `{"error": "failed to parse form data"}`, http.StatusBadRequest)
+		return
+	}
+
+	// Get files from form
+	files := r.MultipartForm.File["files"]
+	if len(files) == 0 {
+		http.Error(w, `{"error": "no files provided"}`, http.StatusBadRequest)
+		return
+	}
+
+	// Create uploads directory if it doesn't exist
+	uploadDir := "./uploads"
+	if err := os.MkdirAll(uploadDir, 0755); err != nil {
+		log.Printf("HandleUploadFiles: error creating upload directory: %v", err)
+		http.Error(w, `{"error": "failed to create upload directory"}`, http.StatusInternalServerError)
+		return
+	}
+
+	var uploadedAttachments []models.FileAttachment
+
+	// Process each file
+	for _, fileHeader := range files {
+		// Validate file size (10MB max per file)
+		if fileHeader.Size > 10<<20 {
+			log.Printf("HandleUploadFiles: file %s too large: %d bytes", fileHeader.Filename, fileHeader.Size)
+			continue // Skip this file but continue with others
+		}
+
+		// Validate file type
+		allowedTypes := map[string]bool{
+			"image/jpeg":         true,
+			"image/png":          true,
+			"image/gif":          true,
+			"image/webp":         true,
+			"video/mp4":          true,
+			"video/mpeg":         true,
+			"video/quicktime":    true,
+			"video/webm":         true,
+			"application/pdf":    true,
+			"text/plain":         true,
+			"application/msword": true,
+			"application/vnd.openxmlformats-officedocument.wordprocessingml.document": true,
+		}
+
+		file, err := fileHeader.Open()
+		if err != nil {
+			log.Printf("HandleUploadFiles: error opening file %s: %v", fileHeader.Filename, err)
+			continue
+		}
+		defer file.Close()
+
+		// Read first 512 bytes to detect MIME type
+		buffer := make([]byte, 512)
+		_, err = file.Read(buffer)
+		if err != nil && err != io.EOF {
+			log.Printf("HandleUploadFiles: error reading file %s: %v", fileHeader.Filename, err)
+			continue
+		}
+
+		// Detect MIME type
+		mimeType := http.DetectContentType(buffer)
+		if !allowedTypes[mimeType] {
+			log.Printf("HandleUploadFiles: unsupported file type %s for file %s", mimeType, fileHeader.Filename)
+			continue
+		}
+
+		// Reset file pointer
+		file.Seek(0, 0)
+
+		// Generate unique filename
+		fileExt := filepath.Ext(fileHeader.Filename)
+		uniqueFilename := uuid.New().String() + fileExt
+		filePath := filepath.Join(uploadDir, uniqueFilename)
+
+		// Create the file on disk
+		dst, err := os.Create(filePath)
+		if err != nil {
+			log.Printf("HandleUploadFiles: error creating file %s: %v", filePath, err)
+			continue
+		}
+		defer dst.Close()
+
+		// Copy the uploaded file to the destination file
+		_, err = io.Copy(dst, file)
+		if err != nil {
+			log.Printf("HandleUploadFiles: error copying file %s: %v", fileHeader.Filename, err)
+			os.Remove(filePath) // Clean up failed file
+			continue
+		}
+
+		// Create file attachment record
+		attachment := models.FileAttachment{
+			ID:           uuid.New().String(),
+			Filename:     uniqueFilename,
+			OriginalName: fileHeader.Filename,
+			MimeType:     mimeType,
+			Size:         fileHeader.Size,
+			URL:          "/uploads/" + uniqueFilename,
+			UploadedAt:   time.Now(),
+		}
+
+		uploadedAttachments = append(uploadedAttachments, attachment)
+	}
+
+	if len(uploadedAttachments) == 0 {
+		http.Error(w, `{"error": "no valid files uploaded"}`, http.StatusBadRequest)
+		return
+	}
+
+	// Update strand with new attachments
+	if strand.Attachments == nil {
+		strand.Attachments = []models.FileAttachment{}
+	}
+	strand.Attachments = append(strand.Attachments, uploadedAttachments...)
+	strand.UpdatedAt = time.Now()
+
+	// Save the updated strand
+	_, err = models.SaveStrand(r.Context(), strand)
+	if err != nil {
+		log.Printf("HandleUploadFiles: error saving strand %s: %v", strandID, err)
+		// Clean up uploaded files
+		for _, attachment := range uploadedAttachments {
+			os.Remove(filepath.Join(uploadDir, attachment.Filename))
+		}
+		http.Error(w, `{"error": "failed to save strand with attachments"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// Return success response
+	response := FileUploadResponse{
+		StrandID:    strandID,
+		Attachments: uploadedAttachments,
+	}
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		log.Printf("HandleUploadFiles: error encoding response: %v", err)
+		http.Error(w, `{"error": "failed to encode response"}`, http.StatusInternalServerError)
+	}
+}
+
+// HandleDeleteAttachment handles DELETE /strands/:id/attachments/:attachmentId
+func HandleDeleteAttachment(w http.ResponseWriter, r *http.Request, strandID, attachmentID string) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("HandleDeleteAttachment: recovered from panic: %v", r)
+			http.Error(w, `{"error": "internal server error due to panic"}`, http.StatusInternalServerError)
+		}
+	}()
+
+	if r.Method != http.MethodDelete {
+		http.Error(w, `{"error": "method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+
+	// Get user ID from context (set by auth middleware)
+	userID, _ := r.Context().Value("user_id").(string)
+	if userID == "" {
+		http.Error(w, `{"error": "unauthorized"}`, http.StatusUnauthorized)
+		return
+	}
+
+	// Get the strand
+	strand, err := models.GetStrand(r.Context(), strandID)
+	if err != nil {
+		log.Printf("HandleDeleteAttachment: error getting strand %s: %v", strandID, err)
+		http.Error(w, `{"error": "strand not found"}`, http.StatusNotFound)
+		return
+	}
+
+	// Verify ownership
+	if strand.UserID != userID {
+		http.Error(w, `{"error": "unauthorized"}`, http.StatusUnauthorized)
+		return
+	}
+
+	// Find and remove the attachment
+	var updatedAttachments []models.FileAttachment
+	var attachmentToDelete *models.FileAttachment
+
+	for _, attachment := range strand.Attachments {
+		if attachment.ID == attachmentID {
+			attachmentToDelete = &attachment
+		} else {
+			updatedAttachments = append(updatedAttachments, attachment)
+		}
+	}
+
+	if attachmentToDelete == nil {
+		http.Error(w, `{"error": "attachment not found"}`, http.StatusNotFound)
+		return
+	}
+
+	// Update strand
+	strand.Attachments = updatedAttachments
+	strand.UpdatedAt = time.Now()
+
+	// Save the updated strand
+	_, err = models.SaveStrand(r.Context(), strand)
+	if err != nil {
+		log.Printf("HandleDeleteAttachment: error saving strand %s: %v", strandID, err)
+		http.Error(w, `{"error": "failed to remove attachment"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// Delete the physical file
+	filePath := filepath.Join("./uploads", attachmentToDelete.Filename)
+	if err := os.Remove(filePath); err != nil && !os.IsNotExist(err) {
+		log.Printf("HandleDeleteAttachment: warning: failed to delete file %s: %v", filePath, err)
+		// Continue anyway since the database record is removed
+	}
+
+	// Return success
+	w.WriteHeader(http.StatusNoContent)
 }

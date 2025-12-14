@@ -13,6 +13,9 @@ export interface AIStep {
   status: "pending" | "active" | "completed" | "error";
   timestamp: Date;
   details?: string;
+  modelOverride?: boolean;
+  modelUsed?: string;
+  overrideReason?: string;
 }
 
 export interface SyncProgress {
@@ -308,6 +311,24 @@ const SyncProgressModal: React.FC<SyncProgressModalProps> = ({
                       {step.details && (
                         <div className="text-xs text-gray-600 mt-1">
                           {step.details}
+                        </div>
+                      )}
+                      {step.modelOverride && step.status === "completed" && (
+                        <div className="mt-2 p-2 bg-yellow-50 border border-yellow-200 rounded-md">
+                          <div className="flex items-center gap-1 text-xs text-yellow-800">
+                            <span className="font-medium">Model Override:</span>
+                            <span>
+                              {step.overrideReason || "Media content detected"}
+                            </span>
+                          </div>
+                          {step.modelUsed && (
+                            <div className="text-xs text-yellow-700 mt-1">
+                              Using model:{" "}
+                              <span className="font-medium">
+                                {step.modelUsed}
+                              </span>
+                            </div>
+                          )}
                         </div>
                       )}
                       {step.status === "active" && (

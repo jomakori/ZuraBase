@@ -177,8 +177,24 @@ func (c *AIClient) AnalyzeContent(ctx context.Context, req *AnalysisRequest) (*A
 		return nil, fmt.Errorf("missing API key")
 	}
 
-	// Create a simple prompt for content analysis
-	prompt := fmt.Sprintf("Analyze the following content and provide a summary and key topics:\n\nContent: %s\n\nPlease provide a concise summary and identify 3-5 key topics or tags.", req.Content)
+	// Create a prompt that requests markdown format with separate sections
+	prompt := fmt.Sprintf(`Analyze the following content and provide a structured response in markdown format:
+
+Content: %s
+
+Please format your response as follows:
+
+# Summary
+[Provide a concise summary of the content here]
+
+## Tags
+- [tag1]
+- [tag2]
+- [tag3]
+- [tag4]
+- [tag5]
+
+Provide 3-5 relevant tags that capture the main topics or themes.`, req.Content)
 
 	// Make direct HTTP request to the LLM API
 	payload := map[string]interface{}{

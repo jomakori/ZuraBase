@@ -11,6 +11,22 @@ export interface SyncLog {
   tags: string[];
   synced_by_ai: boolean;
   notes?: string;
+  model_override?: boolean;
+  model_used?: string;
+  override_reason?: string;
+}
+
+/**
+ * Represents a file attachment
+ */
+export interface FileAttachment {
+  id: string;
+  filename: string;
+  original_name: string;
+  mime_type: string;
+  size: number;
+  url: string;
+  uploaded_at: string;
 }
 
 /**
@@ -28,6 +44,7 @@ export interface Strand {
   ai_status?: string; // "idle", "processing", "completed", "failed"
   ai_failure_reason?: string; // Reason for AI processing failure
   sync_history: SyncLog[];
+  attachments?: FileAttachment[];
   created_at: string;
   updated_at: string;
 }

@@ -139,6 +139,7 @@ func setupGinRoutes(router *gin.Engine) {
 		plannerGroup.POST("/import", ginPlannerImportHandler)
 		plannerGroup.GET("/:id/export", ginPlannerExportHandler)
 		plannerGroup.POST("/:id/lanes/reorder", ginPlannerReorderLanesHandler)
+		plannerGroup.PUT("/:id/lanes/reorder", ginPlannerReorderLanesHandler)
 		plannerGroup.POST("/:id/lane/:laneId/cards/reorder", ginPlannerReorderCardsHandler)
 		plannerGroup.POST("/:id/lane/:laneId/split", ginPlannerSplitLaneHandler)
 		plannerGroup.POST("/:id/lane/:laneId/card", ginPlannerAddCardHandler)
@@ -164,6 +165,7 @@ func setupGinRoutes(router *gin.Engine) {
 		plannerGroup2.POST("/import", ginPlannerImportHandler)
 		plannerGroup2.GET("/:id/export", ginPlannerExportHandler)
 		plannerGroup2.POST("/:id/lanes/reorder", ginPlannerReorderLanesHandler)
+		plannerGroup2.PUT("/:id/lanes/reorder", ginPlannerReorderLanesHandler)
 		plannerGroup2.POST("/:id/lane/:laneId/cards/reorder", ginPlannerReorderCardsHandler)
 		plannerGroup2.POST("/:id/lane/:laneId/split", ginPlannerSplitLaneHandler)
 		plannerGroup2.POST("/:id/lane/:laneId/card", ginPlannerAddCardHandler)
@@ -394,7 +396,7 @@ func ginPlannerExportHandler(c *gin.Context) {
 }
 
 func ginPlannerReorderLanesHandler(c *gin.Context) {
-	planner.HandleReorderLanes(c.Writer, copyUserContextToRequest(c))
+	planner.HandleReorderLanes(c)
 }
 
 func ginPlannerReorderCardsHandler(c *gin.Context) {
@@ -406,7 +408,7 @@ func ginPlannerSplitLaneHandler(c *gin.Context) {
 }
 
 func ginPlannerAddCardHandler(c *gin.Context) {
-	planner.HandleAddCard(c.Writer, copyUserContextToRequest(c))
+	planner.HandleAddCard(c)
 }
 
 func ginPlannerGetCardHandler(c *gin.Context) {
@@ -426,7 +428,7 @@ func ginPlannerMoveCardHandler(c *gin.Context) {
 }
 
 func ginPlannerAddLaneHandler(c *gin.Context) {
-	planner.HandleAddLane(c.Writer, copyUserContextToRequest(c))
+	planner.HandleAddLane(c)
 }
 
 func ginPlannerUpdateLaneHandler(c *gin.Context) {

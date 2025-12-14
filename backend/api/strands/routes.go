@@ -82,6 +82,32 @@ func HandleStrandsRequest(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		// Check if this is a file upload request
+		if strings.HasSuffix(remainder, "/upload") {
+			id := strings.TrimSuffix(remainder, "/upload")
+			if r.Method == http.MethodPost {
+				HandleUploadFiles(w, r, id)
+				return
+			}
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		// Check if this is an attachment deletion request
+		if strings.Contains(remainder, "/attachments/") {
+			parts := strings.Split(remainder, "/attachments/")
+			if len(parts) == 2 {
+				strandID := parts[0]
+				attachmentID := parts[1]
+				if r.Method == http.MethodDelete {
+					HandleDeleteAttachment(w, r, strandID, attachmentID)
+					return
+				}
+			}
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
 		// Otherwise, treat as a regular strand ID
 		id := remainder
 

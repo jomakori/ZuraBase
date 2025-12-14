@@ -174,6 +174,11 @@ const SyncLogViewer: React.FC<SyncLogViewerProps> = ({
                           ✓ AI Synced
                         </span>
                       )}
+                      {log.model_override && (
+                        <span className="inline-flex items-center px-2 py-0.5 text-xs font-medium rounded-full bg-yellow-100 text-yellow-800">
+                          🔄 Model Override
+                        </span>
+                      )}
                       {log.notes?.includes("Rolled back") && (
                         <span className="inline-flex items-center px-2 py-0.5 text-xs font-medium rounded-full bg-yellow-100 text-yellow-800">
                           <ArrowCounterClockwise size={12} className="mr-1" />
@@ -301,6 +306,25 @@ const SyncLogViewer: React.FC<SyncLogViewerProps> = ({
                       ))}
                     </div>
                   </div>
+
+                  {/* Model Override Information */}
+                  {log.model_override && (
+                    <div className="mb-3">
+                      <span className="text-sm font-medium text-gray-700">
+                        Model Override:
+                      </span>
+                      <div className="mt-1 p-2 bg-yellow-50 border border-yellow-200 rounded-md">
+                        <div className="text-sm text-yellow-800">
+                          {log.override_reason || "Media content detected"}
+                        </div>
+                        {log.model_used && (
+                          <div className="text-xs text-yellow-700 mt-1">
+                            Model used: <span className="font-medium">{log.model_used}</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
 
                   {/* Notes */}
                   {log.notes && (

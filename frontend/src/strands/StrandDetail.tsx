@@ -6,7 +6,10 @@ import ConfirmDialog from "./components/ConfirmDialog";
 import Dialog from "../components/Dialog";
 import Toast from "../components/Toast";
 import SyncProgressModal from "./components/SyncProgressModal";
-import { Strand, SyncLog } from "./types";
+import FileUpload from "./components/FileUpload";
+import UploadProgress from "./components/UploadProgress";
+import AttachmentList from "./components/AttachmentList";
+import { Strand, SyncLog, FileAttachment } from "./types";
 import { StrandsApi } from "./api";
 import { syncService, SyncProgress } from "./syncService";
 import {
@@ -19,6 +22,7 @@ import {
   X,
   ArrowsClockwise,
   ClockCounterClockwise,
+  Paperclip,
 } from "@phosphor-icons/react";
 
 interface StrandDetailProps {
@@ -57,6 +61,17 @@ const StrandDetail: React.FC<StrandDetailProps> = ({
     failed: 0,
     status: "syncing",
   });
+
+  // File upload state
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<
+    Array<{
+      fileName: string;
+      progress: number;
+      status: "uploading" | "completed" | "error";
+      error?: string;
+    }>
+  >([]);
 
   // Toast notifications
   const [toast, setToast] = useState<{
@@ -218,6 +233,104 @@ const StrandDetail: React.FC<StrandDetailProps> = ({
     } finally {
       setPendingRollbackLog(null);
     }
+  };
+
+  // File upload handlers
+  const handleFilesSelected = async (files: File[]) => {
+    if (!strand || files.length === 0) return;
+
+    setIsUploading(true);
+
+    // Initialize upload progress
+    const initialProgress = files.map((file) => ({
+      fileName: file.name,
+      progress: 0,
+      status: "uploading" as const,
+    }));
+    setUploadProgress(initialProgress);
+
+    try {
+      const attachments = await StrandsApi.uploadFiles(strand.id, files);
+
+      // Update progress to completed
+      setUploadProgress((prev) =>
+        prev.map((item) => ({
+          ...item,
+          progress: 100,
+          status: "completed",
+        }))
+      );
+
+      setToast({
+        show: true,
+        message: `Successfully uploaded ${attachments.length} file(s)`,
+        variant: "success",
+      });
+
+      // Refetch strand to get updated attachments
+      setTimeout(() => {
+        refetch();
+      }, 500);
+    } catch (err) {
+      console.error("Failed to upload files:", err);
+      const errorMessage =
+        err instanceof Error ? err.message : "Failed to upload files";
+
+      // Update progress to error
+      setUploadProgress((prev) =>
+        prev.map((item) => ({
+          ...item,
+          status: "error",
+          error: errorMessage,
+        }))
+      );
+
+      setToast({
+        show: true,
+        message: errorMessage,
+        variant: "error",
+      });
+    } finally {
+      setIsUploading(false);
+      // Clear upload progress after 3 seconds
+      setTimeout(() => {
+        setUploadProgress([]);
+      }, 3000);
+    }
+  };
+
+  const handleDeleteAttachment = async (attachmentId: string) => {
+    if (!strand) return;
+
+    try {
+      await StrandsApi.deleteAttachment(strand.id, attachmentId);
+      setToast({
+        show: true,
+        message: "Attachment deleted successfully",
+        variant: "success",
+      });
+      // Refetch strand to get updated attachments
+      setTimeout(() => {
+        refetch();
+      }, 500);
+    } catch (err) {
+      console.error("Failed to delete attachment:", err);
+      const errorMessage =
+        err instanceof Error ? err.message : "Failed to delete attachment";
+      setToast({
+        show: true,
+        message: errorMessage,
+        variant: "error",
+      });
+    }
+  };
+
+  const handleCancelUpload = (fileName: string) => {
+    // For now, we can't actually cancel the upload due to browser limitations
+    // But we can remove it from the progress display
+    setUploadProgress((prev) =>
+      prev.filter((item) => item.fileName !== fileName)
+    );
   };
 
   if (loading) {
@@ -451,6 +564,41 @@ const StrandDetail: React.FC<StrandDetailProps> = ({
             </div>
           </div>
 
+          {/* File Upload Section */}
+          <div className="bg-white rounded-lg shadow-md overflow-hidden mb-6">
+            <div className="p-6">
+              <h3 className="text-lg font-medium text-gray-900 mb-4 flex items-center">
+                <Paperclip size={20} className="mr-2" />
+                Attachments
+              </h3>
+
+              {/* File Upload Component */}
+              <div className="mb-4">
+                <FileUpload
+                  onFilesSelected={handleFilesSelected}
+                  disabled={isUploading || isEditing}
+                />
+              </div>
+
+              {/* Upload Progress */}
+              <UploadProgress
+                uploads={uploadProgress}
+                onCancel={handleCancelUpload}
+              />
+
+              {/* Existing Attachments */}
+              {strand.attachments && strand.attachments.length > 0 && (
+                <div className="mt-4">
+                  <AttachmentList
+                    attachments={strand.attachments}
+                    onDelete={handleDeleteAttachment}
+                    disabled={isUploading || isEditing}
+                  />
+                </div>
+              )}
+            </div>
+          </div>
+
           {/* Related Strands (placeholder for future implementation) */}
           {strand.related_ids && strand.related_ids.length > 0 && (
             <div className="bg-white rounded-lg shadow-md overflow-hidden">
@@ -510,6 +658,14 @@ const StrandDetail: React.FC<StrandDetailProps> = ({
         onClose={() => setShowSyncProgress(false)}
         canCancel={true}
         onCancel={() => syncService.cancel()}
+      />
+
+      {/* Toast Notifications */}
+      <Toast
+        isOpen={toast.show}
+        message={toast.message}
+        variant={toast.variant}
+        onClose={() => setToast({ ...toast, show: false })}
       />
     </div>
   );

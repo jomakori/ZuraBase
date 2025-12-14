@@ -9,6 +9,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gin-gonic/gin"
+	"zurabase/internal/httputil"
+
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
@@ -24,6 +27,11 @@ func AddCard(ctx context.Context, laneID, title, content string, position int) (
 	var planner Planner
 	err := plannerCollection.FindOne(ctx, bson.M{"lanes.id": laneID}).Decode(&planner)
 	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			log.Printf("[WARN] AddCard: planner not found for lane %s", laneID)
+		} else {
+			log.Printf("[ERROR] AddCard: database error retrieving planner: %v", err)
+		}
 		return nil, err
 	}
 
@@ -270,48 +278,49 @@ func ReorderCards(ctx context.Context, laneID string, cardIDs []string) error {
 }
 
 // HandleAddCard handles POST /planner/{id}/lane/{laneId}/card
-func HandleAddCard(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+func HandleAddCard(c *gin.Context) {
+	laneID := c.Param("laneId")
+	if laneID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid path"})
 		return
 	}
-	
-	// Extract lane ID from path
-	path := r.URL.Path
-	parts := strings.Split(path, "/")
-	if len(parts) != 6 || parts[1] != "planner" || parts[3] != "lane" || parts[5] != "card" {
-		http.Error(w, "Invalid path", http.StatusBadRequest)
-		return
-	}
-	laneID := parts[4]
-	
-	// Parse request body
+
 	var request struct {
 		Title    string `json:"title"`
 		Content  string `json:"content"`
 		Position int    `json:"position"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	
-	card, err := AddCard(r.Context(), laneID, request.Title, request.Content, request.Position)
+
+	// Validation
+	if request.Position < 0 {
+		log.Printf("[WARN] HandleAddCard: validation failed - position %d is negative", request.Position)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Position must be non-negative"})
+		return
+	}
+
+	card, err := AddCard(c.Request.Context(), laneID, request.Title, request.Content, request.Position)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		if err == mongo.ErrNoDocuments {
+			log.Printf("[WARN] HandleAddCard: planner not found for card creation - laneID=%s", laneID)
+			httputil.WriteJSONErrorGin(c, "Planner not found for card creation", http.StatusNotFound)
+		} else {
+			log.Printf("[ERROR] HandleAddCard: failed to add card - laneID=%s, err=%v", laneID, err)
+			httputil.WriteJSONErrorGin(c, err.Error(), http.StatusInternalServerError)
+		}
 		return
 	}
-	
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(card); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-	}
+
+	c.JSON(http.StatusOK, card)
 }
 
 // HandleGetCard handles GET /planner/{id}/lane/{laneId}/card/{cardId}
 func HandleGetCard(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		httputil.WriteJSONError(w, r, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	
@@ -319,27 +328,27 @@ func HandleGetCard(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
 	parts := strings.Split(path, "/")
 	if len(parts) != 7 || parts[1] != "planner" || parts[3] != "lane" || parts[5] != "card" {
-		http.Error(w, "Invalid path", http.StatusBadRequest)
+		httputil.WriteJSONError(w, r, "Invalid path", http.StatusBadRequest)
 		return
 	}
 	cardID := parts[6]
 	
 	card, err := GetCard(r.Context(), cardID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
+		httputil.WriteJSONError(w, r, err.Error(), http.StatusNotFound)
 		return
 	}
 	
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(card); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		httputil.WriteJSONError(w, r, err.Error(), http.StatusInternalServerError)
 	}
 }
 
 // HandleUpdateCard handles PUT /planner/{id}/lane/{laneId}/card/{cardId}
 func HandleUpdateCard(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPut {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		httputil.WriteJSONError(w, r, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	
@@ -347,7 +356,7 @@ func HandleUpdateCard(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
 	parts := strings.Split(path, "/")
 	if len(parts) != 7 || parts[1] != "planner" || parts[3] != "lane" || parts[5] != "card" {
-		http.Error(w, "Invalid path", http.StatusBadRequest)
+		httputil.WriteJSONError(w, r, "Invalid path", http.StatusBadRequest)
 		return
 	}
 	cardID := parts[6]
@@ -358,31 +367,31 @@ func HandleUpdateCard(w http.ResponseWriter, r *http.Request) {
 		Content string `json:"content"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		httputil.WriteJSONError(w, r, err.Error(), http.StatusBadRequest)
 		return
 	}
 	// Wrap into fields
 	if request.Title == "" && request.Content == "" {
-		http.Error(w, "No fields provided", http.StatusBadRequest)
+		httputil.WriteJSONError(w, r, "No fields provided", http.StatusBadRequest)
 		return
 	}
 	
 	card, err := UpdateCard(r.Context(), cardID, request.Title, request.Content)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		httputil.WriteJSONError(w, r, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(card); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		httputil.WriteJSONError(w, r, err.Error(), http.StatusInternalServerError)
 	}
 }
 
 // HandleDeleteCard handles DELETE /planner/{id}/lane/{laneId}/card/{cardId}
 func HandleDeleteCard(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodDelete {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		httputil.WriteJSONError(w, r, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	
@@ -390,13 +399,13 @@ func HandleDeleteCard(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
 	parts := strings.Split(path, "/")
 	if len(parts) != 7 || parts[1] != "planner" || parts[3] != "lane" || parts[5] != "card" {
-		http.Error(w, "Invalid path", http.StatusBadRequest)
+		httputil.WriteJSONError(w, r, "Invalid path", http.StatusBadRequest)
 		return
 	}
 	cardID := parts[6]
 	
 	if err := DeleteCard(r.Context(), cardID); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		httputil.WriteJSONError(w, r, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	
@@ -406,7 +415,7 @@ func HandleDeleteCard(w http.ResponseWriter, r *http.Request) {
 // HandleReorderCards handles PUT /planner/{id}/lane/{laneId}/cards/reorder
 func HandleReorderCards(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPut {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		httputil.WriteJSONError(w, r, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	
@@ -414,7 +423,7 @@ func HandleReorderCards(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
 	parts := strings.Split(path, "/")
 	if len(parts) != 7 || parts[1] != "planner" || parts[3] != "lane" || parts[5] != "cards" || parts[6] != "reorder" {
-		http.Error(w, "Invalid path", http.StatusBadRequest)
+		httputil.WriteJSONError(w, r, "Invalid path", http.StatusBadRequest)
 		return
 	}
 	laneID := parts[4]
@@ -424,12 +433,12 @@ func HandleReorderCards(w http.ResponseWriter, r *http.Request) {
 		CardIDs []string `json:"card_ids"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		httputil.WriteJSONError(w, r, err.Error(), http.StatusBadRequest)
 		return
 	}
 	
 	if err := ReorderCards(r.Context(), laneID, request.CardIDs); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		httputil.WriteJSONError(w, r, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	
@@ -439,7 +448,7 @@ func HandleReorderCards(w http.ResponseWriter, r *http.Request) {
 // HandleMoveCard handles PUT /planner/{id}/card/{cardId}/move
 func HandleMoveCard(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPut {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		httputil.WriteJSONError(w, r, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	
@@ -447,7 +456,7 @@ func HandleMoveCard(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
 	parts := strings.Split(path, "/")
 	if len(parts) != 6 || parts[1] != "planner" || parts[3] != "card" || parts[5] != "move" {
-		http.Error(w, "Invalid path", http.StatusBadRequest)
+		httputil.WriteJSONError(w, r, "Invalid path", http.StatusBadRequest)
 		return
 	}
 	cardID := parts[4]
@@ -459,7 +468,41 @@ func HandleMoveCard(w http.ResponseWriter, r *http.Request) {
 		Fields      map[string]interface{} `json:"fields,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		httputil.WriteJSONError(w, r, err.Error(), http.StatusBadRequest)
+		return
+	}
+	
+	// Validate new lane exists
+	var planner Planner
+	err := plannerCollection.FindOne(r.Context(), bson.M{"lanes.id": request.NewLaneID}).Decode(&planner)
+	if err != nil {
+		log.Printf("[WARN] HandleMoveCard: target lane not found - laneID=%s, err=%v", request.NewLaneID, err)
+		httputil.WriteJSONError(w, r, "Target lane not found", http.StatusNotFound)
+		return
+	}
+	// Find the target lane within the planner
+	var targetLane *PlannerLane
+	for i := range planner.Lanes {
+		if planner.Lanes[i].ID == request.NewLaneID {
+			targetLane = &planner.Lanes[i]
+			break
+		}
+	}
+	if targetLane == nil {
+		log.Printf("[WARN] HandleMoveCard: lane ID %s not found in planner", request.NewLaneID)
+		httputil.WriteJSONError(w, r, "Target lane not found", http.StatusNotFound)
+		return
+	}
+	// Validate position index
+	if request.NewPosition < 0 {
+		log.Printf("[WARN] HandleMoveCard: position %d is negative", request.NewPosition)
+		httputil.WriteJSONError(w, r, "Position must be non-negative", http.StatusBadRequest)
+		return
+	}
+	// Allow position up to len(targetLane.Cards) (insert after last card)
+	if request.NewPosition > len(targetLane.Cards) {
+		log.Printf("[WARN] HandleMoveCard: position %d exceeds lane card count %d", request.NewPosition, len(targetLane.Cards))
+		httputil.WriteJSONError(w, r, "Position exceeds maximum allowed", http.StatusBadRequest)
 		return
 	}
 	
@@ -473,12 +516,12 @@ func HandleMoveCard(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		httputil.WriteJSONError(w, r, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(card); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		httputil.WriteJSONError(w, r, err.Error(), http.StatusInternalServerError)
 	}
 }

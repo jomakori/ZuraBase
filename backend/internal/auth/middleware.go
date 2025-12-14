@@ -2,10 +2,12 @@ package auth
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"os"
 	"strings"
+
+	"zurabase/internal/httputil"
+	"zurabase/internal/services"
 
 	"github.com/gin-gonic/gin"
 )
@@ -25,14 +27,14 @@ func AuthMiddleware(next http.Handler) http.Handler {
 		if authHeader == "" {
 			cookie, err := r.Cookie("auth_token")
 			if err != nil {
-				http.Error(w, "Unauthorized", http.StatusUnauthorized)
+				httputil.WriteJSONError(w, r, "Unauthorized", http.StatusUnauthorized)
 				return
 			}
 			authHeader = "Bearer " + cookie.Value
 		}
 
 		if !strings.HasPrefix(authHeader, "Bearer ") {
-			http.Error(w, "Invalid token format", http.StatusUnauthorized)
+			httputil.WriteJSONError(w, r, "Invalid token format", http.StatusUnauthorized)
 			return
 		}
 
@@ -52,7 +54,7 @@ func AuthMiddleware(next http.Handler) http.Handler {
 		// Fallback to internal JWT validation
 		claims, err := ValidateToken(tokenStr)
 		if err != nil {
-			http.Error(w, "Invalid token", http.StatusUnauthorized)
+			httputil.WriteJSONError(w, r, "Invalid token", http.StatusUnauthorized)
 			return
 		}
 
@@ -94,40 +96,50 @@ func OptionalAuthMiddleware(next http.Handler) http.Handler {
 // GinAuthMiddleware enforces authentication on protected routes for Gin
 func GinAuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		fmt.Printf("[DEBUG] GinAuthMiddleware called - Path: %s, Method: %s\n", c.Request.URL.Path, c.Request.Method)
-		fmt.Printf("[DEBUG] Request Host: %s, Origin: %s\n", c.Request.Host, c.GetHeader("Origin"))
-		fmt.Printf("[DEBUG] All cookies in request: %v\n", c.Request.Cookies())
+		logger := services.GetLoggerFromGinContext(c, "auth")
+		logger.Debug("GinAuthMiddleware called",
+			services.String("path", c.Request.URL.Path),
+			services.String("method", c.Request.Method),
+		)
+		logger.Debug("Request details",
+			services.String("host", c.Request.Host),
+			services.String("origin", c.GetHeader("Origin")),
+		)
+		logger.Debug("Cookies in request",
+			services.Any("cookies", c.Request.Cookies()),
+		)
 
 		authHeader := c.GetHeader("Authorization")
-		fmt.Printf("[DEBUG] Authorization header: %s\n", authHeader)
+		logger.Debug("Authorization header", services.String("header", authHeader))
 
 		if authHeader == "" {
 			cookie, err := c.Cookie("auth_token")
 			if err != nil {
-				fmt.Printf("[DEBUG] No auth_token cookie found - error: %v\n", err)
-				fmt.Printf("[DEBUG] Available cookie names: ")
-				for _, c := range c.Request.Cookies() {
-					fmt.Printf("%s ", c.Name)
-				}
-				fmt.Printf("\n")
-				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+				logger.Debug("No auth_token cookie found",
+					services.Error(err),
+					services.Any("available_cookies", c.Request.Cookies()),
+				)
+				httputil.WriteJSONErrorGin(c, "Unauthorized", http.StatusUnauthorized)
 				return
 			}
-			fmt.Printf("[DEBUG] Found auth_token cookie, length: %d, value preview: %s...\n", len(cookie), cookie[:min(20, len(cookie))])
+			logger.Debug("Found auth_token cookie",
+				services.Int("length", len(cookie)),
+				services.String("preview", cookie[:min(20, len(cookie))]),
+			)
 			authHeader = "Bearer " + cookie
 		}
 
 		if !strings.HasPrefix(authHeader, "Bearer ") {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid token format"})
+			httputil.WriteJSONErrorGin(c, "Invalid token format", http.StatusUnauthorized)
 			return
 		}
 
 		tokenStr := strings.TrimPrefix(authHeader, "Bearer ")
-		fmt.Printf("[DEBUG] Validating token, length: %d\n", len(tokenStr))
+		logger.Debug("Validating token", services.Int("token_length", len(tokenStr)))
 		
 		claims, err := ValidateToken(tokenStr)
 		if err != nil {
-			fmt.Printf("[DEBUG] Token validation failed: %v\n", err)
+			logger.Warn("Token validation failed", services.Error(err))
 			// In test mode, allow a static test token to bypass validation
 			if os.Getenv("ENVIRONMENT") == "test" && tokenStr == "test-token" {
 				c.Set("user_id", "test-user")
@@ -141,11 +153,14 @@ func GinAuthMiddleware() gin.HandlerFunc {
 				c.Next()
 				return
 			}
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
+			httputil.WriteJSONErrorGin(c, "Invalid token", http.StatusUnauthorized)
 			return
 		}
 
-		fmt.Printf("[DEBUG] Token validated successfully - UserID: %s, Email: %s\n", claims.UserID, claims.Email)
+		logger.Info("Token validated successfully",
+			services.String("user_id", claims.UserID),
+			services.String("email", claims.Email),
+		)
 		
 		// Set in Gin context for handlers
 		c.Set("user_id", claims.UserID)

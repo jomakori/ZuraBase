@@ -10,6 +10,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gin-gonic/gin"
+	"zurabase/internal/httputil"
+
 	"go.mongodb.org/mongo-driver/bson"
 )
 
@@ -283,7 +286,7 @@ func UnsplitLane(ctx context.Context, laneID, targetLaneID string) error {
 // HandleUnsplitLane handles PUT /planner/{id}/lane/{laneId}/unsplit
 func HandleUnsplitLane(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPut {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		httputil.WriteJSONError(w, r, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
@@ -292,18 +295,18 @@ func HandleUnsplitLane(w http.ResponseWriter, r *http.Request) {
 	parts := strings.Split(path, "/")
 	// /planner/{id}/lane/{laneId}/unsplit?target={targetLaneId}
 	if len(parts) != 6 || parts[1] != "planner" || parts[3] != "lane" || parts[5] != "unsplit" {
-		http.Error(w, "Invalid path", http.StatusBadRequest)
+		httputil.WriteJSONError(w, r, "Invalid path", http.StatusBadRequest)
 		return
 	}
 	laneID := parts[4]
 	targetLaneID := r.URL.Query().Get("target")
 	if targetLaneID == "" {
-		http.Error(w, "target lane ID required", http.StatusBadRequest)
+		httputil.WriteJSONError(w, r, "target lane ID required", http.StatusBadRequest)
 		return
 	}
 
 	if err := UnsplitLane(r.Context(), laneID, targetLaneID); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		httputil.WriteJSONError(w, r, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -311,50 +314,38 @@ func HandleUnsplitLane(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleAddLane handles POST /planner/{id}/lane
-func HandleAddLane(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+func HandleAddLane(c *gin.Context) {
+	plannerID := c.Param("id")
+	if plannerID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid path"})
 		return
 	}
 
-	// Extract planner ID from path
-	path := r.URL.Path
-	if len(path) <= len("/planner/") || !strings.HasSuffix(path, "/lane") {
-		http.Error(w, "Invalid path", http.StatusBadRequest)
-		return
-	}
-	plannerID := path[len("/planner/") : len(path)-len("/lane")]
-
-	// Parse request body
 	var request struct {
 		Title       string `json:"title"`
 		Description string `json:"description"`
 		Color       string `json:"color"`
 		Position    int    `json:"position"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	lane, err := AddLane(r.Context(), plannerID, request.Title, request.Description, request.Color, request.Position)
+	lane, err := AddLane(c.Request.Context(), plannerID, request.Title, request.Description, request.Color, request.Position)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
 	log.Printf("HandleAddLane: Returning lane with ID=%s, Cards=%v (len=%d)", lane.ID, lane.Cards, len(lane.Cards))
-
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(lane); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-	}
+	c.JSON(http.StatusOK, lane)
 }
 
 // HandleUpdateLane handles PUT /planner/{id}/lane/{laneId}
 func HandleUpdateLane(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPut {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		httputil.WriteJSONError(w, r, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
@@ -362,7 +353,7 @@ func HandleUpdateLane(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
 	parts := strings.Split(path, "/")
 	if len(parts) != 5 || parts[1] != "planner" || parts[3] != "lane" {
-		http.Error(w, "Invalid path", http.StatusBadRequest)
+		httputil.WriteJSONError(w, r, "Invalid path", http.StatusBadRequest)
 		return
 	}
 	laneID := parts[4]
@@ -374,26 +365,26 @@ func HandleUpdateLane(w http.ResponseWriter, r *http.Request) {
 		Color       string `json:"color"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		httputil.WriteJSONError(w, r, err.Error(), http.StatusBadRequest)
 		return
 	}
 
 	lane, err := UpdateLane(r.Context(), laneID, request.Title, request.Description, request.Color)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		httputil.WriteJSONError(w, r, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(lane); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		httputil.WriteJSONError(w, r, err.Error(), http.StatusInternalServerError)
 	}
 }
 
 // HandleDeleteLane handles DELETE /planner/{id}/lane/{laneId}
 func HandleDeleteLane(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodDelete {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		httputil.WriteJSONError(w, r, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
@@ -401,13 +392,13 @@ func HandleDeleteLane(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
 	parts := strings.Split(path, "/")
 	if len(parts) != 5 || parts[1] != "planner" || parts[3] != "lane" {
-		http.Error(w, "Invalid path", http.StatusBadRequest)
+		httputil.WriteJSONError(w, r, "Invalid path", http.StatusBadRequest)
 		return
 	}
 	laneID := parts[4]
 
 	if err := DeleteLane(r.Context(), laneID); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		httputil.WriteJSONError(w, r, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -417,7 +408,7 @@ func HandleDeleteLane(w http.ResponseWriter, r *http.Request) {
 // HandleSplitLane handles POST /planner/{id}/lane/{laneId}/split
 func HandleSplitLane(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		httputil.WriteJSONError(w, r, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
@@ -425,7 +416,7 @@ func HandleSplitLane(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
 	parts := strings.Split(path, "/")
 	if len(parts) != 6 || parts[1] != "planner" || parts[3] != "lane" || parts[5] != "split" {
-		http.Error(w, "Invalid path", http.StatusBadRequest)
+		httputil.WriteJSONError(w, r, "Invalid path", http.StatusBadRequest)
 		return
 	}
 	laneID := parts[4]
@@ -438,51 +429,42 @@ func HandleSplitLane(w http.ResponseWriter, r *http.Request) {
 		SplitPosition  int    `json:"split_position"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		httputil.WriteJSONError(w, r, err.Error(), http.StatusBadRequest)
 		return
 	}
 
 	lane, err := SplitLane(r.Context(), laneID, request.NewTitle, request.NewDescription, request.NewColor, request.SplitPosition)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		httputil.WriteJSONError(w, r, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(lane); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		httputil.WriteJSONError(w, r, err.Error(), http.StatusInternalServerError)
 	}
 }
 
 // HandleReorderLanes handles PUT /planner/{id}/lanes/reorder
-func HandleReorderLanes(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPut {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+func HandleReorderLanes(c *gin.Context) {
+	plannerID := c.Param("id")
+	if plannerID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid path"})
 		return
 	}
 
-	// Extract planner ID from path
-	path := r.URL.Path
-	parts := strings.Split(path, "/")
-	if len(parts) != 5 || parts[1] != "planner" || parts[3] != "lanes" || parts[4] != "reorder" {
-		http.Error(w, "Invalid path", http.StatusBadRequest)
-		return
-	}
-	plannerID := parts[2]
-
-	// Parse request body
 	var request struct {
 		LaneIDs []string `json:"lane_ids"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	if err := ReorderLanes(r.Context(), plannerID, request.LaneIDs); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	if err := ReorderLanes(c.Request.Context(), plannerID, request.LaneIDs); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	w.WriteHeader(http.StatusNoContent)
+	c.Status(http.StatusNoContent)
 }

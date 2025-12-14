@@ -13,28 +13,43 @@ import (
 
 // SyncLog represents a single sync operation's result
 type SyncLog struct {
-	Timestamp  time.Time `json:"timestamp" bson:"timestamp"`
-	Summary    string    `json:"summary" bson:"summary"`
-	Tags       []string  `json:"tags" bson:"tags"`
-	SyncedByAI bool      `json:"synced_by_ai" bson:"synced_by_ai"`
-	Notes      string    `json:"notes,omitempty" bson:"notes,omitempty"`
+	Timestamp          time.Time `json:"timestamp" bson:"timestamp"`
+	Summary            string    `json:"summary" bson:"summary"`
+	Tags               []string  `json:"tags" bson:"tags"`
+	SyncedByAI         bool      `json:"synced_by_ai" bson:"synced_by_ai"`
+	Notes              string    `json:"notes,omitempty" bson:"notes,omitempty"`
+	ModelOverride      bool      `json:"model_override,omitempty" bson:"model_override,omitempty"`
+	ModelUsed          string    `json:"model_used,omitempty" bson:"model_used,omitempty"`
+	OverrideReason     string    `json:"override_reason,omitempty" bson:"override_reason,omitempty"`
+}
+
+// FileAttachment represents an uploaded file attachment
+type FileAttachment struct {
+	ID          string    `json:"id" bson:"id"`
+	Filename    string    `json:"filename" bson:"filename"`
+	OriginalName string   `json:"original_name" bson:"original_name"`
+	MimeType    string    `json:"mime_type" bson:"mime_type"`
+	Size        int64     `json:"size" bson:"size"`
+	URL         string    `json:"url" bson:"url"`
+	UploadedAt  time.Time `json:"uploaded_at" bson:"uploaded_at"`
 }
 
 // Strand represents a piece of captured information that has been enriched with AI
 type Strand struct {
-	ID              string    `json:"id" bson:"id"`
-	UserID          string    `json:"user_id" bson:"user_id"`
-	Content         string    `json:"content" bson:"content"`
-	Source          string    `json:"source" bson:"source"` // "whatsapp", "manual", etc.
-	Tags            []string  `json:"tags" bson:"tags"`
-	Summary         string    `json:"summary" bson:"summary"`
-	RelatedIDs      []string  `json:"related_ids" bson:"related_ids"`
-	SyncedWithAI    bool      `json:"synced_with_ai" bson:"synced_with_ai"`
-	AIStatus        string    `json:"ai_status" bson:"ai_status"` // "idle", "processing", "completed", "failed"
-	AIFailureReason string    `json:"ai_failure_reason,omitempty" bson:"ai_failure_reason,omitempty"`
-	SyncHistory     []SyncLog `json:"sync_history" bson:"sync_history"`
-	CreatedAt       time.Time `json:"created_at" bson:"created_at"`
-	UpdatedAt       time.Time `json:"updated_at" bson:"updated_at"`
+	ID              string           `json:"id" bson:"id"`
+	UserID          string           `json:"user_id" bson:"user_id"`
+	Content         string           `json:"content" bson:"content"`
+	Source          string           `json:"source" bson:"source"` // "whatsapp", "manual", etc.
+	Tags            []string         `json:"tags" bson:"tags"`
+	Summary         string           `json:"summary" bson:"summary"`
+	RelatedIDs      []string         `json:"related_ids" bson:"related_ids"`
+	SyncedWithAI    bool             `json:"synced_with_ai" bson:"synced_with_ai"`
+	AIStatus        string           `json:"ai_status" bson:"ai_status"` // "idle", "processing", "completed", "failed"
+	AIFailureReason string           `json:"ai_failure_reason,omitempty" bson:"ai_failure_reason,omitempty"`
+	SyncHistory     []SyncLog        `json:"sync_history" bson:"sync_history"`
+	Attachments     []FileAttachment `json:"attachments,omitempty" bson:"attachments,omitempty"`
+	CreatedAt       time.Time        `json:"created_at" bson:"created_at"`
+	UpdatedAt       time.Time        `json:"updated_at" bson:"updated_at"`
 }
 
 var strandCollection *mongo.Collection

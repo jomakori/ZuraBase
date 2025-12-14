@@ -4,12 +4,14 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+
+	"zurabase/internal/httputil"
 )
 
 // HandleSaveNote handles POST /note
 func HandleSaveNote(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		httputil.WriteJSONError(w, r, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
@@ -19,7 +21,7 @@ func HandleSaveNote(w http.ResponseWriter, r *http.Request) {
 
 	var note Note
 	if err := json.NewDecoder(r.Body).Decode(&note); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		httputil.WriteJSONError(w, r, err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -39,32 +41,32 @@ func HandleSaveNote(w http.ResponseWriter, r *http.Request) {
 
 	savedNote, err := SaveNote(r.Context(), &note, userID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		httputil.WriteJSONError(w, r, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	if err := json.NewEncoder(w).Encode(savedNote); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		httputil.WriteJSONError(w, r, err.Error(), http.StatusInternalServerError)
 	}
 }
 
 // HandleListNotes handles GET /notes?user_id={id}
 func HandleListNotes(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		httputil.WriteJSONError(w, r, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	userID := r.URL.Query().Get("user_id")
 	if userID == "" {
-		http.Error(w, "Missing user_id parameter", http.StatusBadRequest)
+		httputil.WriteJSONError(w, r, "Missing user_id parameter", http.StatusBadRequest)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	notes, err := GetNotesByUser(r.Context(), userID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		httputil.WriteJSONError(w, r, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -73,37 +75,37 @@ func HandleListNotes(w http.ResponseWriter, r *http.Request) {
 		notes = []Note{}
 	}
 	if err := json.NewEncoder(w).Encode(notes); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		httputil.WriteJSONError(w, r, err.Error(), http.StatusInternalServerError)
 	}
 }
 
 // HandleGetNote handles GET /note/{id}
 func HandleGetNote(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		httputil.WriteJSONError(w, r, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	note, err := GetNote(r.Context(), id)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
+		httputil.WriteJSONError(w, r, err.Error(), http.StatusNotFound)
 		return
 	}
 	if err := json.NewEncoder(w).Encode(note); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		httputil.WriteJSONError(w, r, err.Error(), http.StatusInternalServerError)
 	}
 }
 
 // HandleDeleteNote handles DELETE /note/{id}
 func HandleDeleteNote(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != http.MethodDelete {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		httputil.WriteJSONError(w, r, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	if err := DeleteNote(r.Context(), id); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		httputil.WriteJSONError(w, r, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -126,7 +128,7 @@ func HandleNoteRequest(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(path, "/note/") {
 		id := path[len("/note/"):]
 		if id == "" {
-			http.Error(w, "Note ID is required", http.StatusBadRequest)
+			httputil.WriteJSONError(w, r, "Note ID is required", http.StatusBadRequest)
 			return
 		}
 
@@ -136,7 +138,7 @@ func HandleNoteRequest(w http.ResponseWriter, r *http.Request) {
 		case http.MethodDelete:
 			HandleDeleteNote(w, r, id)
 		default:
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			httputil.WriteJSONError(w, r, "Method not allowed", http.StatusMethodNotAllowed)
 		}
 		return
 	}

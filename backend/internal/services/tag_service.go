@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -41,10 +42,21 @@ func (s *TagService) ExtractTagsFromContent(ctx context.Context, content, source
 		return nil, "", fmt.Errorf("AI analysis failed: %w", err)
 	}
 
-	// Process and normalize tags
-	normalizedTags := s.normalizeTags(analysis.Tags)
+	// Parse the markdown-formatted response to extract summary and tags
+	summary, tags := s.parseMarkdownResponse(analysis.Summary)
 
-	return normalizedTags, analysis.Summary, nil
+	// If parsing failed, fall back to the original behavior
+	if summary == "" {
+		summary = analysis.Summary
+	}
+	if len(tags) == 0 {
+		tags = analysis.Tags
+	}
+
+	// Process and normalize tags
+	normalizedTags := s.normalizeTags(tags)
+
+	return normalizedTags, summary, nil
 }
 
 // ExtractTagsFromContentWithContext uses the AI client to extract tags from content with additional context
@@ -81,10 +93,21 @@ func (s *TagService) ExtractTagsFromContentWithContext(ctx context.Context, cont
 		return nil, "", fmt.Errorf("AI analysis failed: %w", err)
 	}
 
-	// Process and normalize tags
-	normalizedTags := s.normalizeTags(analysis.Tags)
+	// Parse the markdown-formatted response to extract summary and tags
+	summary, tags := s.parseMarkdownResponse(analysis.Summary)
 
-	return normalizedTags, analysis.Summary, nil
+	// If parsing failed, fall back to the original behavior
+	if summary == "" {
+		summary = analysis.Summary
+	}
+	if len(tags) == 0 {
+		tags = analysis.Tags
+	}
+
+	// Process and normalize tags
+	normalizedTags := s.normalizeTags(tags)
+
+	return normalizedTags, summary, nil
 }
 
 // normalizeTags processes tags to ensure consistency
@@ -201,6 +224,104 @@ func (s *TagService) MergeTags(userTags, aiTags []string) []string {
 	sort.Strings(mergedTags)
 
 	return mergedTags
+}
+
+// parseMarkdownResponse extracts summary and tags from markdown-formatted LLM response
+func (s *TagService) parseMarkdownResponse(response string) (string, []string) {
+	if response == "" {
+		return "", nil
+	}
+
+	// Regular expressions to match markdown sections
+	// Use (?s) for dotall mode (dot matches newlines) and capture everything until next header or end
+	summaryRegex := regexp.MustCompile(`(?s)#\s*Summary\s*\n+(.*?)(?:\n+##|\n+#|\n*$)`)
+	tagsRegex := regexp.MustCompile(`(?s)##\s*Tags\s*\n+(.*?)(?:\n+#|\n*$)`)
+
+	var summary string
+	var tags []string
+
+	// Extract summary
+	summaryFound := false
+	if summaryMatch := summaryRegex.FindStringSubmatch(response); len(summaryMatch) > 1 {
+		summary = strings.TrimSpace(summaryMatch[1])
+		summaryFound = true
+		log.Printf("[DEBUG] parseMarkdownResponse: summary found: %q", summary)
+	}
+
+	// Extract tags
+	tagsFound := false
+	if tagsMatch := tagsRegex.FindStringSubmatch(response); len(tagsMatch) > 1 {
+		tagsSection := strings.TrimSpace(tagsMatch[1])
+		log.Printf("[DEBUG] parseMarkdownResponse: tags section raw: %q", tagsSection)
+		tags = s.extractTagsFromMarkdown(tagsSection)
+		tagsFound = true
+		log.Printf("[DEBUG] parseMarkdownResponse: tags found: %v", tags)
+	}
+
+	log.Printf("[DEBUG] parseMarkdownResponse: summaryFound=%v, tagsFound=%v", summaryFound, tagsFound)
+
+	// Enhanced fallback logic - only use fallback when markdown sections are not found
+	if !summaryFound && !tagsFound {
+		// No markdown sections found - treat entire response as summary and extract tags
+		log.Printf("[DEBUG] parseMarkdownResponse: no markdown sections, using fallback")
+		summary = strings.TrimSpace(response)
+		tags = extractTagsFromResponseAIClient(response)
+	} else if !summaryFound && tagsFound {
+		// Only tags found (e.g., response started with ## Tags) - summary should be empty
+		log.Printf("[DEBUG] parseMarkdownResponse: only tags found, setting summary empty")
+		summary = ""
+	} else if summaryFound && !tagsFound {
+		// Only summary found - check if the summary contains the tags section
+		log.Printf("[DEBUG] parseMarkdownResponse: only summary found")
+		if strings.Contains(summary, "## Tags") {
+			// Split summary to get only the actual summary part
+			parts := strings.SplitN(summary, "## Tags", 2)
+			summary = strings.TrimSpace(parts[0])
+			// Try to extract tags from the tags section
+			if len(parts) > 1 {
+				tagsSection := strings.TrimSpace(parts[1])
+				tags = s.extractTagsFromMarkdown(tagsSection)
+			}
+		} else {
+			// No tags section in summary, try to extract tags from the full response
+			tags = extractTagsFromResponseAIClient(response)
+		}
+	}
+	// If both summary and tags were found via markdown parsing, we don't need fallback
+
+	log.Printf("[DEBUG] parseMarkdownResponse: returning summary=%q, tags=%v", summary, tags)
+	return summary, tags
+}
+
+// extractTagsFromMarkdown extracts tags from markdown bullet points or comma-separated lists
+func (s *TagService) extractTagsFromMarkdown(tagsSection string) []string {
+	var tags []string
+
+	// Split by newlines to handle bullet points
+	lines := strings.Split(tagsSection, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+
+		// Remove bullet points and other markdown formatting
+		line = strings.TrimPrefix(line, "-")
+		line = strings.TrimPrefix(line, "*")
+		line = strings.TrimPrefix(line, "+")
+		line = strings.TrimSpace(line)
+
+		// Remove square brackets if present (from the template)
+		line = strings.TrimPrefix(line, "[")
+		line = strings.TrimSuffix(line, "]")
+		line = strings.TrimSpace(line)
+
+		if line != "" {
+			tags = append(tags, line)
+		}
+	}
+
+	return tags
 }
 
 // Helper function to check if a slice contains a string

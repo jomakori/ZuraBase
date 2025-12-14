@@ -13,7 +13,9 @@ import (
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
+	"zurabase/internal/httputil"
 )
+
 
 // Planner represents a Markdown-based planning board
 type Planner struct {
@@ -100,14 +102,16 @@ func CreatePlanner(ctx context.Context, title, description, templateID string, u
 		} else {
 			log.Printf("[DEBUG] CreatePlanner: Template fetched with %d lanes", len(template.Lanes))
 			// Apply template lanes to planner
+			colors := []string{"#3b82f6", "#ef4444", "#22c55e", "#eab308", "#f97316", "#8b5cf6"}
 			for i, templateLane := range template.Lanes {
+				color := colors[i%len(colors)]
 				lane := PlannerLane{
 					ID:             GenerateID(),
 					PlannerID:      plannerID,
 					TemplateLaneID: templateLane.ID,
 					Title:          templateLane.Name,
 					Description:    templateLane.Description,
-					Color:          "#3b82f6", // Default blue color
+					Color:          color,
 					Position:       i + 1,
 					CreatedAt:      now,
 					UpdatedAt:      now,
@@ -276,20 +280,20 @@ func GetPlannersByUser(ctx context.Context, userID string) ([]*Planner, error) {
 // HandleListPlanners handles GET /planner?user_id={id}
 func HandleListPlanners(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		httputil.WriteJSONError(w, r, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	userID := r.URL.Query().Get("user_id")
 	if userID == "" {
-		http.Error(w, "Missing user_id parameter", http.StatusBadRequest)
+		httputil.WriteJSONError(w, r, "Missing user_id parameter", http.StatusBadRequest)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	planners, err := GetPlannersByUser(r.Context(), userID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		httputil.WriteJSONError(w, r, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -298,14 +302,14 @@ func HandleListPlanners(w http.ResponseWriter, r *http.Request) {
 		planners = []*Planner{}
 	}
 	if err := json.NewEncoder(w).Encode(planners); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		httputil.WriteJSONError(w, r, err.Error(), http.StatusInternalServerError)
 	}
 }
 
 func HandleCreatePlanner(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("user_id").(string)
 	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		httputil.WriteJSONError(w, r, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
@@ -316,7 +320,7 @@ func HandleCreatePlanner(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		httputil.WriteJSONError(w, r, err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -326,20 +330,20 @@ func HandleCreatePlanner(w http.ResponseWriter, r *http.Request) {
 	planner, err := CreatePlanner(r.Context(), request.Title, request.Description, request.TemplateID, userID)
 	if err != nil {
 		log.Printf("[ERROR] Failed to create planner (title=%s, templateID=%s): %v", request.Title, request.TemplateID, err)
-		http.Error(w, fmt.Sprintf("Failed to create planner: %v", err), http.StatusInternalServerError)
+		httputil.WriteJSONError(w, r, fmt.Sprintf("Failed to create planner: %v", err), http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(planner); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		httputil.WriteJSONError(w, r, err.Error(), http.StatusInternalServerError)
 	}
 }
 
 // HandleGetPlanner handles GET /planner/{id}
 func HandleGetPlanner(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		httputil.WriteJSONError(w, r, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
@@ -349,7 +353,7 @@ func HandleGetPlanner(w http.ResponseWriter, r *http.Request) {
 		path = path[len("/api"):]
 	}
 	if len(path) <= len("/planner/") {
-		http.Error(w, "Planner ID is required", http.StatusBadRequest)
+		httputil.WriteJSONError(w, r, "Planner ID is required", http.StatusBadRequest)
 		return
 	}
 	id := path[len("/planner/"):]
@@ -358,20 +362,20 @@ func HandleGetPlanner(w http.ResponseWriter, r *http.Request) {
 
 	planner, err := GetPlanner(r.Context(), id)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
+		httputil.WriteJSONError(w, r, err.Error(), http.StatusNotFound)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(planner); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		httputil.WriteJSONError(w, r, err.Error(), http.StatusInternalServerError)
 	}
 }
 
 // HandleUpdatePlanner handles PUT /planner/{id}
 func HandleUpdatePlanner(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPut {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		httputil.WriteJSONError(w, r, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
@@ -381,7 +385,7 @@ func HandleUpdatePlanner(w http.ResponseWriter, r *http.Request) {
 		path = path[len("/api"):]
 	}
 	if len(path) <= len("/planner/") {
-		http.Error(w, "Planner ID is required", http.StatusBadRequest)
+		httputil.WriteJSONError(w, r, "Planner ID is required", http.StatusBadRequest)
 		return
 	}
 	id := path[len("/planner/"):]
@@ -392,26 +396,26 @@ func HandleUpdatePlanner(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		httputil.WriteJSONError(w, r, err.Error(), http.StatusBadRequest)
 		return
 	}
 
 	planner, err := UpdatePlanner(r.Context(), id, request.Title, request.Description)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		httputil.WriteJSONError(w, r, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(planner); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		httputil.WriteJSONError(w, r, err.Error(), http.StatusInternalServerError)
 	}
 }
 
 // HandleDeletePlanner handles DELETE /planner/{id}
 func HandleDeletePlanner(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodDelete {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		httputil.WriteJSONError(w, r, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
@@ -421,13 +425,13 @@ func HandleDeletePlanner(w http.ResponseWriter, r *http.Request) {
 		path = path[len("/api"):]
 	}
 	if len(path) <= len("/planner/") {
-		http.Error(w, "Planner ID is required", http.StatusBadRequest)
+		httputil.WriteJSONError(w, r, "Planner ID is required", http.StatusBadRequest)
 		return
 	}
 	id := path[len("/planner/"):]
 
 	if err := DeletePlanner(r.Context(), id); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		httputil.WriteJSONError(w, r, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -444,21 +448,21 @@ func GenerateID() string {
 // HandleExportPlannerMarkdown handles GET /planner/{id}/export
 func HandleExportPlannerMarkdown(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		httputil.WriteJSONError(w, r, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	// Extract ID from path
 	path := r.URL.Path
 	if len(path) <= len("/planner/") || !strings.HasSuffix(path, "/export") {
-		http.Error(w, "Invalid path", http.StatusBadRequest)
+		httputil.WriteJSONError(w, r, "Invalid path", http.StatusBadRequest)
 		return
 	}
 	id := path[len("/planner/") : len(path)-len("/export")]
 
 	markdown, err := ExportPlannerMarkdown(r.Context(), id)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		httputil.WriteJSONError(w, r, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -470,7 +474,7 @@ func HandleExportPlannerMarkdown(w http.ResponseWriter, r *http.Request) {
 // HandleImportPlannerMarkdown handles POST /planner/import
 func HandleImportPlannerMarkdown(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		httputil.WriteJSONError(w, r, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
@@ -480,18 +484,18 @@ func HandleImportPlannerMarkdown(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		httputil.WriteJSONError(w, r, err.Error(), http.StatusBadRequest)
 		return
 	}
 
 	planner, err := ImportPlannerFromMarkdown(r.Context(), request.Markdown, request.TemplateID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		httputil.WriteJSONError(w, r, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(planner); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		httputil.WriteJSONError(w, r, err.Error(), http.StatusInternalServerError)
 	}
 }

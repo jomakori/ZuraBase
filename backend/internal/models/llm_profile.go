@@ -11,6 +11,8 @@ import (
 	"io"
 	"log"
 	"os"
+	"sort"
+	"strings"
 	"time"
 
 	"go.mongodb.org/mongo-driver/bson"
@@ -393,4 +395,53 @@ func SetDefaultLLMProfile(ctx context.Context, id string, userID string) error {
 	}
 
 	return nil
+}
+
+// GetMediaOptimizedLLMProfile retrieves a media-optimized LLM profile for a user
+// This function prioritizes finding a profile with a media-optimized model name
+// For now, we'll assume models containing "vision", "multimodal", or "gpt-4" are media-optimized
+func GetMediaOptimizedLLMProfile(ctx context.Context, userID string) (*LLMProfile, error) {
+	// Get all profiles for the user
+	profiles, err := GetLLMProfilesByUser(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get user LLM profiles: %w", err)
+	}
+
+	// Define media-optimized model patterns (can be expanded as needed)
+	mediaOptimizedPatterns := []string{
+		"vision",
+		"multimodal",
+		"gpt-4",
+		"gpt-4o",
+		"gpt-4-vision",
+		"claude-3",
+		"gemini-pro-vision",
+	}
+
+	// Look for profiles with media-optimized models
+	var mediaOptimizedProfiles []*LLMProfile
+	for _, profile := range profiles {
+		modelLower := strings.ToLower(profile.Model)
+		for _, pattern := range mediaOptimizedPatterns {
+			if strings.Contains(modelLower, pattern) {
+				mediaOptimizedProfiles = append(mediaOptimizedProfiles, profile)
+				break
+			}
+		}
+	}
+
+	// If no media-optimized profiles found, return the default profile
+	if len(mediaOptimizedProfiles) == 0 {
+		log.Printf("No media-optimized LLM profiles found for user %s, using default profile", userID)
+		return GetDefaultLLMProfile(ctx, userID)
+	}
+
+	// Sort by creation date (newest first) and return the most recent
+	sort.Slice(mediaOptimizedProfiles, func(i, j int) bool {
+		return mediaOptimizedProfiles[i].CreatedAt.After(mediaOptimizedProfiles[j].CreatedAt)
+	})
+
+	log.Printf("Found %d media-optimized LLM profiles for user %s, using: %s",
+		len(mediaOptimizedProfiles), userID, mediaOptimizedProfiles[0].Model)
+	return mediaOptimizedProfiles[0], nil
 }
