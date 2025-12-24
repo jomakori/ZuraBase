@@ -118,15 +118,7 @@ func setupGinRoutes(router *gin.Engine) {
 		notesGroup.Any("/*path", ginNotesHandler)
 	}
 
-	notesGroup2 := router.Group("/note")
-	notesGroup2.Use(auth.GinOptionalAuthMiddleware())
-	{
-		notesGroup2.Any("", ginNotesHandler)
-		notesGroup2.Any("/*path", ginNotesHandler)
-	}
-
 	router.GET("/api/notes", auth.GinOptionalAuthMiddleware(), ginListNotesHandler)
-	router.GET("/notes", auth.GinOptionalAuthMiddleware(), ginListNotesHandler)
 
 	// Planner routes with optional authentication
 	plannerGroup := router.Group("/api/planner")
@@ -155,38 +147,10 @@ func setupGinRoutes(router *gin.Engine) {
 		plannerGroup.DELETE("/:id", ginPlannerDeleteHandler)
 	}
 
-	plannerGroup2 := router.Group("/planner")
-	plannerGroup2.Use(auth.GinOptionalAuthMiddleware())
-	{
-		plannerGroup2.GET("/list", ginPlannerListHandler)
-		plannerGroup2.POST("", ginPlannerCreateHandler)
-		plannerGroup2.GET("/templates", ginPlannerTemplatesHandler)
-		plannerGroup2.GET("/templates/:id", ginPlannerTemplateHandler)
-		plannerGroup2.POST("/import", ginPlannerImportHandler)
-		plannerGroup2.GET("/:id/export", ginPlannerExportHandler)
-		plannerGroup2.POST("/:id/lanes/reorder", ginPlannerReorderLanesHandler)
-		plannerGroup2.PUT("/:id/lanes/reorder", ginPlannerReorderLanesHandler)
-		plannerGroup2.POST("/:id/lane/:laneId/cards/reorder", ginPlannerReorderCardsHandler)
-		plannerGroup2.POST("/:id/lane/:laneId/split", ginPlannerSplitLaneHandler)
-		plannerGroup2.POST("/:id/lane/:laneId/card", ginPlannerAddCardHandler)
-		plannerGroup2.GET("/:id/lane/:laneId/card/:cardId", ginPlannerGetCardHandler)
-		plannerGroup2.PUT("/:id/lane/:laneId/card/:cardId", ginPlannerUpdateCardHandler)
-		plannerGroup2.DELETE("/:id/lane/:laneId/card/:cardId", ginPlannerDeleteCardHandler)
-		plannerGroup2.POST("/:id/card/:cardId/move", ginPlannerMoveCardHandler)
-		plannerGroup2.POST("/:id/lane", ginPlannerAddLaneHandler)
-		plannerGroup2.PUT("/:id/lane/:laneId", ginPlannerUpdateLaneHandler)
-		plannerGroup2.DELETE("/:id/lane/:laneId", ginPlannerDeleteLaneHandler)
-		plannerGroup2.GET("/:id", ginPlannerGetHandler)
-		plannerGroup2.PUT("/:id", ginPlannerUpdateHandler)
-		plannerGroup2.DELETE("/:id", ginPlannerDeleteHandler)
-	}
-
 	// Image search routes
 	router.GET("/api/images/:query", ginImageSearchHandler)
-	router.GET("/images/:query", ginImageSearchHandler)
 	// Handle empty query case
 	router.GET("/api/images/", ginImageSearchEmptyHandler)
-	router.GET("/images/", ginImageSearchEmptyHandler)
 
 	// Strands routes with authentication
 	strandsGroup := router.Group("/api/strands")
@@ -196,16 +160,8 @@ func setupGinRoutes(router *gin.Engine) {
 		strandsGroup.Any("/*path", ginStrandsHandler)
 	}
 
-	strandsGroup2 := router.Group("/strands")
-	strandsGroup2.Use(auth.GinAuthMiddleware())
-	{
-		strandsGroup2.Any("", ginStrandsHandler)
-		strandsGroup2.Any("/*path", ginStrandsHandler)
-	}
-
 	// WhatsApp webhook (no authentication required) - separate from strands
 	router.POST("/api/whatsapp", ginWhatsAppWebhookHandler)
-	router.POST("/whatsapp", ginWhatsAppWebhookHandler)
 
 	// LLM Profiles routes with authentication
 	llmProfilesGroup := router.Group("/api/llm-profiles")
@@ -220,20 +176,6 @@ func setupGinRoutes(router *gin.Engine) {
 		llmProfilesGroup.DELETE("/:id", ginLLMProfileDeleteHandler)
 		llmProfilesGroup.PUT("/:id/set-default", ginLLMProfileSetDefaultHandler)
 		llmProfilesGroup.POST("/:id/test-stored-connection", ginLLMProfileTestStoredConnectionHandler)
-	}
-
-	llmProfilesGroup2 := router.Group("/llm-profiles")
-	llmProfilesGroup2.Use(auth.GinAuthMiddleware())
-	{
-		llmProfilesGroup2.GET("", ginLLMProfilesHandler)
-		llmProfilesGroup2.POST("", ginLLMCreateProfileHandler)
-		llmProfilesGroup2.POST("/test-connection", ginLLMTestConnectionHandler)
-		llmProfilesGroup2.GET("/models", ginLLMListModelsHandler)
-		llmProfilesGroup2.GET("/:id", ginLLMProfileHandler)
-		llmProfilesGroup2.PUT("/:id", ginLLMProfileUpdateHandler)
-		llmProfilesGroup2.DELETE("/:id", ginLLMProfileDeleteHandler)
-		llmProfilesGroup2.PUT("/:id/set-default", ginLLMProfileSetDefaultHandler)
-		llmProfilesGroup2.POST("/:id/test-stored-connection", ginLLMProfileTestStoredConnectionHandler)
 	}
 
 	// Log ingestion endpoint with optional authentication

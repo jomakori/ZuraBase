@@ -1,3 +1,5 @@
+import { getApiBase } from '../getApiBase';
+
 /**
  * Frontend Unified Logging System
  * Aligns with backend centralized logging architecture
@@ -143,7 +145,8 @@ class ClientLogger {
     }
 
     try {
-      const response = await fetch('/api/logs', {
+      const logsEndpoint = `${getApiBase()}/logs`;
+      const response = await fetch(logsEndpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

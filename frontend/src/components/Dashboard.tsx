@@ -3,6 +3,7 @@ import NavBar from "./NavBar";
 import { useAuth } from "../auth/AuthContext";
 import { getNote } from "../notes/api";
 import { getTemplates, getPlanner } from "../planner/api";
+import { getApiBase } from "../getApiBase";
 
 interface DashboardItem {
   id: string;
@@ -24,7 +25,7 @@ const Dashboard: React.FC = () => {
       try {
         setError(null);
 
-        const base = import.meta.env.API_ENDPOINT || "/api";
+        const base = getApiBase();
 
         // Include user filtering to prevent data leaks
         // Use only known fields on the user object to identify ownership

@@ -11,11 +11,11 @@ import (
 
 	"sort"
 
+	"zurabase/internal/httputil"
+
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
-	"zurabase/internal/httputil"
 )
-
 
 // Planner represents a Markdown-based planning board
 type Planner struct {
@@ -48,6 +48,7 @@ type PlannerLane struct {
 type PlannerCard struct {
 	ID        string                 `json:"id" bson:"id"`
 	LaneID    string                 `json:"lane_id" bson:"lane_id"`
+	Color     string                 `json:"color" bson:"color"`
 	Fields    map[string]interface{} `json:"fields" bson:"fields"` // columnID -> value
 	Position  int                    `json:"position" bson:"position"`
 	CreatedAt time.Time              `json:"created_at" bson:"created_at"`

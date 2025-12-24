@@ -9,8 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"zurabase/internal/httputil"
+
+	"github.com/gin-gonic/gin"
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -116,50 +117,68 @@ func GetCard(ctx context.Context, cardID string) (*PlannerCard, error) {
  return nil, mongo.ErrNoDocuments
 }
 
- // UpdateCard updates a card's title and content in MongoDB
-func UpdateCard(ctx context.Context, cardID, title, content string) (*PlannerCard, error) {
-	log.Printf("Updating card: id=%s, title=%s", cardID, title)
+ // UpdateCard updates a card's title, content, and color in MongoDB
+func UpdateCard(ctx context.Context, cardID, title, content, color string) (*PlannerCard, error) {
+ log.Printf("Updating card: id=%s, title=%s", cardID, title)
 
-	filter := bson.M{"lanes.cards.id": cardID}
-	update := bson.M{"$set": bson.M{
-		"lanes.$[].cards.$[elem].fields.title":   title,
-		"lanes.$[].cards.$[elem].fields.content": content,
-		"lanes.$[].cards.$[elem].updated_at":     time.Now(),
-	}}
-	arrayFilters := options.Update().SetArrayFilters(options.ArrayFilters{
-		Filters: []interface{}{bson.M{"elem.id": cardID}},
-	})
+ updateFields := bson.M{
+ 	"lanes.$[].cards.$[elem].fields.title":   title,
+ 	"lanes.$[].cards.$[elem].fields.content": content,
+ 	"lanes.$[].cards.$[elem].updated_at":     time.Now(),
+ }
+ if color != "" {
+ 	updateFields["lanes.$[].cards.$[elem].color"] = color
+ }
 
-	_, err := plannerCollection.UpdateOne(ctx, filter, update, arrayFilters)
-	if err != nil {
-		return nil, err
-	}
+ filter := bson.M{"lanes.cards.id": cardID}
+ update := bson.M{"$set": updateFields}
+ arrayFilters := options.Update().SetArrayFilters(options.ArrayFilters{
+ 	Filters: []interface{}{bson.M{"elem.id": cardID}},
+ })
 
-	// Re-fetch card to return
-	updated, err := GetCard(ctx, cardID)
-	if err != nil {
-		return nil, err
-	}
-	// Ensure updated fields include latest title/content
-	if updated.Fields == nil {
-		updated.Fields = map[string]interface{}{}
-	}
-	updated.Fields["title"] = title
-	updated.Fields["content"] = content
-	return updated, nil
+ _, err := plannerCollection.UpdateOne(ctx, filter, update, arrayFilters)
+ if err != nil {
+ 	return nil, err
+ }
+
+ // Re-fetch card to return
+ updated, err := GetCard(ctx, cardID)
+ if err != nil {
+ 	return nil, err
+ }
+ // Ensure updated fields include latest title/content
+ if updated.Fields == nil {
+ 	updated.Fields = map[string]interface{}{}
+ }
+ updated.Fields["title"] = title
+ updated.Fields["content"] = content
+ // Update color field if provided
+ if color != "" {
+ 	updated.Color = color
+ }
+ return updated, nil
 }
 
  // DeleteCard removes a card from a lane in MongoDB
-func DeleteCard(ctx context.Context, cardID string) error {
-	log.Printf("Deleting card: id=%s", cardID)
+ func DeleteCard(ctx context.Context, cardID string) error {
+ 	log.Printf("Deleting card: id=%s", cardID)
 
-	_, err := plannerCollection.UpdateOne(
-		ctx,
-		bson.M{"lanes.cards.id": cardID},
-		bson.M{"$pull": bson.M{"lanes.$[].cards": bson.M{"id": cardID}}},
-	)
-	return err
-}
+ 	result, err := plannerCollection.UpdateOne(
+ 		ctx,
+ 		bson.M{"lanes.cards.id": cardID},
+ 		bson.M{"$pull": bson.M{"lanes.$[].cards": bson.M{"id": cardID}}},
+ 	)
+ 	if err != nil {
+ 		log.Printf("[ERROR] DeleteCard: database error - cardID=%s, err=%v", cardID, err)
+ 		return err
+ 	}
+ 	if result.ModifiedCount == 0 {
+ 		log.Printf("[WARN] DeleteCard: card %s not found in any lane", cardID)
+ 		return fmt.Errorf("card not found")
+ 	}
+ 	log.Printf("[INFO] DeleteCard: successfully deleted card %s", cardID)
+ 	return nil
+ }
 
  // ReorderCards updates the positions of cards inside a lane in MongoDB
 func ReorderCards(ctx context.Context, laneID string, cardIDs []string) error {
@@ -327,11 +346,13 @@ func HandleGetCard(w http.ResponseWriter, r *http.Request) {
 	// Extract card ID from path
 	path := r.URL.Path
 	parts := strings.Split(path, "/")
-	if len(parts) != 7 || parts[1] != "planner" || parts[3] != "lane" || parts[5] != "card" {
+	// Path format: /api/planner/{id}/lane/{laneId}/card/{cardId}
+	// After split: ["", "api", "planner", "{id}", "lane", "{laneId}", "card", "{cardId}"]
+	if len(parts) != 8 || parts[1] != "api" || parts[2] != "planner" || parts[4] != "lane" || parts[6] != "card" {
 		httputil.WriteJSONError(w, r, "Invalid path", http.StatusBadRequest)
 		return
 	}
-	cardID := parts[6]
+	cardID := parts[7]
 	
 	card, err := GetCard(r.Context(), cardID)
 	if err != nil {
@@ -355,16 +376,19 @@ func HandleUpdateCard(w http.ResponseWriter, r *http.Request) {
 	// Extract card ID from path
 	path := r.URL.Path
 	parts := strings.Split(path, "/")
-	if len(parts) != 7 || parts[1] != "planner" || parts[3] != "lane" || parts[5] != "card" {
+	// Path format: /api/planner/{id}/lane/{laneId}/card/{cardId}
+	// After split: ["", "api", "planner", "{id}", "lane", "{laneId}", "card", "{cardId}"]
+	if len(parts) != 8 || parts[1] != "api" || parts[2] != "planner" || parts[4] != "lane" || parts[6] != "card" {
 		httputil.WriteJSONError(w, r, "Invalid path", http.StatusBadRequest)
 		return
 	}
-	cardID := parts[6]
+	cardID := parts[7]
 	
 	// Parse request body
 	var request struct {
 		Title   string `json:"title"`
 		Content string `json:"content"`
+		Color   string `json:"color"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 		httputil.WriteJSONError(w, r, err.Error(), http.StatusBadRequest)
@@ -376,7 +400,7 @@ func HandleUpdateCard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	
-	card, err := UpdateCard(r.Context(), cardID, request.Title, request.Content)
+	card, err := UpdateCard(r.Context(), cardID, request.Title, request.Content, request.Color)
 	if err != nil {
 		httputil.WriteJSONError(w, r, err.Error(), http.StatusInternalServerError)
 		return
@@ -398,14 +422,20 @@ func HandleDeleteCard(w http.ResponseWriter, r *http.Request) {
 	// Extract card ID from path
 	path := r.URL.Path
 	parts := strings.Split(path, "/")
-	if len(parts) != 7 || parts[1] != "planner" || parts[3] != "lane" || parts[5] != "card" {
+	// Path format: /api/planner/{id}/lane/{laneId}/card/{cardId}
+	// After split: ["", "api", "planner", "{id}", "lane", "{laneId}", "card", "{cardId}"]
+	if len(parts) != 8 || parts[1] != "api" || parts[2] != "planner" || parts[4] != "lane" || parts[6] != "card" {
 		httputil.WriteJSONError(w, r, "Invalid path", http.StatusBadRequest)
 		return
 	}
-	cardID := parts[6]
+	cardID := parts[7]
 	
 	if err := DeleteCard(r.Context(), cardID); err != nil {
-		httputil.WriteJSONError(w, r, err.Error(), http.StatusInternalServerError)
+		if err.Error() == "card not found" {
+			httputil.WriteJSONError(w, r, "Card not found", http.StatusNotFound)
+		} else {
+			httputil.WriteJSONError(w, r, err.Error(), http.StatusInternalServerError)
+		}
 		return
 	}
 	
@@ -414,7 +444,7 @@ func HandleDeleteCard(w http.ResponseWriter, r *http.Request) {
 
 // HandleReorderCards handles PUT /planner/{id}/lane/{laneId}/cards/reorder
 func HandleReorderCards(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPut {
+	if r.Method != http.MethodPut && r.Method != http.MethodPost {
 		httputil.WriteJSONError(w, r, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
@@ -422,11 +452,13 @@ func HandleReorderCards(w http.ResponseWriter, r *http.Request) {
 	// Extract lane ID from path
 	path := r.URL.Path
 	parts := strings.Split(path, "/")
-	if len(parts) != 7 || parts[1] != "planner" || parts[3] != "lane" || parts[5] != "cards" || parts[6] != "reorder" {
+	// Path format: /api/planner/{id}/lane/{laneId}/cards/reorder
+	// After split: ["", "api", "planner", "{id}", "lane", "{laneId}", "cards", "reorder"]
+	if len(parts) != 8 || parts[1] != "api" || parts[2] != "planner" || parts[4] != "lane" || parts[6] != "cards" || parts[7] != "reorder" {
 		httputil.WriteJSONError(w, r, "Invalid path", http.StatusBadRequest)
 		return
 	}
-	laneID := parts[4]
+	laneID := parts[5]
 	
 	// Parse request body
 	var request struct {
@@ -447,7 +479,7 @@ func HandleReorderCards(w http.ResponseWriter, r *http.Request) {
 
 // HandleMoveCard handles PUT /planner/{id}/card/{cardId}/move
 func HandleMoveCard(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPut {
+	if r.Method != http.MethodPut && r.Method != http.MethodPost {
 		httputil.WriteJSONError(w, r, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
@@ -455,11 +487,13 @@ func HandleMoveCard(w http.ResponseWriter, r *http.Request) {
 	// Extract card ID from path
 	path := r.URL.Path
 	parts := strings.Split(path, "/")
-	if len(parts) != 6 || parts[1] != "planner" || parts[3] != "card" || parts[5] != "move" {
+	// Path format: /api/planner/{id}/card/{cardId}/move
+	// After split: ["", "api", "planner", "{id}", "card", "{cardId}", "move"]
+	if len(parts) != 7 || parts[1] != "api" || parts[2] != "planner" || parts[4] != "card" || parts[6] != "move" {
 		httputil.WriteJSONError(w, r, "Invalid path", http.StatusBadRequest)
 		return
 	}
-	cardID := parts[4]
+	cardID := parts[5]
 	
 	// Parse request body
 	var request struct {

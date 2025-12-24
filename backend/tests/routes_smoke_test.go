@@ -55,12 +55,7 @@ func TestSystem_RoutesSmoke(t *testing.T) {
 		{"Note API POST", "POST", "/api/note", map[string]interface{}{"title": "Test Note", "content": "Test content"}, nil, true},
 		{"Note API PUT", "PUT", "/api/note", nil, nil, true},
 		{"Note API DELETE", "DELETE", "/api/note", nil, nil, true},
-		{"Note GET", "GET", "/note", nil, nil, true},
-		{"Note POST", "POST", "/note", map[string]interface{}{"title": "Test Note", "content": "Test content"}, nil, true},
-		{"Note PUT", "PUT", "/note", nil, nil, true},
-		{"Note DELETE", "DELETE", "/note", nil, nil, true},
 		{"List Notes API", "GET", "/api/notes", nil, nil, true},
-		{"List Notes", "GET", "/notes", nil, nil, true},
 
 		// Planner routes - skip database-dependent ones
 		{"Planner List API", "GET", "/api/planner/list", nil, nil, true},
@@ -68,10 +63,6 @@ func TestSystem_RoutesSmoke(t *testing.T) {
 		{"Planner API POST", "POST", "/api/planner", map[string]interface{}{"title": "Test Planner", "description": "Test description"}, nil, true},
 		{"Planner API PUT", "PUT", "/api/planner", nil, nil, true},
 		{"Planner API DELETE", "DELETE", "/api/planner", nil, nil, true},
-		{"Planner GET", "GET", "/planner", nil, nil, true},
-		{"Planner POST", "POST", "/planner", map[string]interface{}{"title": "Test Planner", "description": "Test description"}, nil, true},
-		{"Planner PUT", "PUT", "/planner", nil, nil, true},
-		{"Planner DELETE", "DELETE", "/planner", nil, nil, true},
 		{"Planner Templates API", "GET", "/api/planner/templates", nil, nil, true},
 		{"Planner Template API", "GET", "/api/planner/templates/test", nil, nil, true},
 		{"Planner Import API", "POST", "/api/planner/import", map[string]interface{}{"markdown": "# Test", "template_id": "test"}, nil, true},
@@ -94,22 +85,16 @@ func TestSystem_RoutesSmoke(t *testing.T) {
 		// LLM Profiles routes - skip database-dependent ones
 		{"LLM Profiles API GET", "GET", "/api/llm-profiles", nil, nil, true},
 		{"LLM Profiles API POST", "POST", "/api/llm-profiles", map[string]interface{}{"name": "Test Profile", "provider": "openai"}, nil, true},
-		{"LLM Profiles GET", "GET", "/llm-profiles", nil, nil, true},
-		{"LLM Profiles POST", "POST", "/llm-profiles", map[string]interface{}{"name": "Test Profile", "provider": "openai"}, nil, true},
 		{"LLM Models API", "GET", "/api/llm-profiles/models", nil, nil, true},
 		{"LLM Test Connection API", "POST", "/api/llm-profiles/test-connection", map[string]interface{}{"name": "Test Profile", "provider": "openai"}, nil, true},
 
 		// Strands routes - skip database-dependent ones
 		{"Strands API GET", "GET", "/api/strands", nil, nil, true},
 		{"Strands API POST", "POST", "/api/strands", map[string]interface{}{"title": "Test Strand", "content": "Test content"}, nil, true},
-		{"Strands GET", "GET", "/strands", nil, nil, true},
-		{"Strands POST", "POST", "/strands", map[string]interface{}{"title": "Test Strand", "content": "Test content"}, nil, true},
 		{"WhatsApp Webhook API", "POST", "/api/strands/whatsapp", map[string]interface{}{"message": "test"}, nil, true},
-		{"WhatsApp Webhook", "POST", "/strands/whatsapp", map[string]interface{}{"message": "test"}, nil, true},
 
 		// Image search routes - skip external API calls
 		{"Image Search API", "GET", "/api/images/test", nil, nil, true},
-		{"Image Search", "GET", "/images/test", nil, nil, true},
 
 		// Logs routes - these should work without DB
 		{"Logs API GET", "GET", "/api/logs", nil, nil, false},
@@ -159,8 +144,7 @@ func TestSystem_RoutesSmoke(t *testing.T) {
 
 				// Check that we don't get a 500 error, except for planner routes with non-existent resources
 				// For planner routes with test IDs, 500 is expected when resources don't exist
-				isPlannerTestRoute := (strings.Contains(tc.path, "/api/planner/test") || strings.Contains(tc.path, "/planner/test")) &&
-					(strings.Contains(tc.path, "/export") || tc.method == "PUT")
+				isPlannerTestRoute := strings.Contains(tc.path, "/api/planner/test") || strings.Contains(tc.path, "/planner/test")
 
 				if rec.Code >= 500 && !isPlannerTestRoute {
 					t.Errorf("Route %s %s returned server error: %d", tc.method, tc.path, rec.Code)

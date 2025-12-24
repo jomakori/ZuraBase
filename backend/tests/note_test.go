@@ -16,17 +16,17 @@ type Note struct {
 }
 
 func saveNote(ctx context.Context, t *testing.T, note *Note) *Note {
-	return DoPostRequest[Note, Note](ctx, t, "/note", *note)
+	return DoPostRequest[Note, Note](ctx, t, "/api/note", *note)
 }
 
 func getNote(ctx context.Context, t *testing.T, id string) *Note {
-	return DoGetRequest[Note](ctx, t, "/note/"+id)
+	return DoGetRequest[Note](ctx, t, "/api/note/"+id)
 }
 
 func deleteNoteByID(ctx context.Context, t *testing.T, id string) {
 	router := server.SetupTestRouter()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, "/note/"+id, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, "/api/note/"+id, nil)
 	if err != nil {
 		t.Fatalf("failed to create DELETE request: %v", err)
 	}
@@ -83,7 +83,7 @@ func TestNote_GetNotFound(t *testing.T) {
 
 	// For a non-existent note, the API should return 404
 	router := server.SetupTestRouter()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "/note/non-existent-id", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "/api/note/non-existent-id", nil)
 	if err != nil {
 		t.Fatalf("failed to create GET request: %v", err)
 	}

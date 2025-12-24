@@ -458,7 +458,7 @@ export async function reorderCards(
   const response = await fetch(
     `${getApiBase()}/planner/${plannerId}/lane/${laneId}/cards/reorder`,
     {
-      method: "PUT",
+      method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ card_ids: cardIds }),
     }
@@ -489,7 +489,7 @@ export async function moveCard(
   const response = await fetch(
     `${getApiBase()}/planner/${plannerId}/card/${cardId}/move`,
     {
-      method: "PUT",
+      method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         new_lane_id: newLaneId,

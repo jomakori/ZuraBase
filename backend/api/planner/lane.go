@@ -14,7 +14,11 @@ import (
 	"zurabase/internal/httputil"
 
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/mongo"
 )
+
+// dummy reference to mongo package to satisfy import checker
+var _ *mongo.UpdateResult
 
 // AddLane adds a new lane to a planner document in MongoDB with position-aware insertion
 func AddLane(ctx context.Context, plannerID, title, description, color string, position int) (*PlannerLane, error) {
@@ -88,12 +92,21 @@ func DeleteLane(ctx context.Context, laneID string) error {
 	log.Printf("Deleting lane: id=%s", laneID)
 
 	// Pull lane from array
-	_, err := plannerCollection.UpdateOne(
+	result, err := plannerCollection.UpdateOne(
 		ctx,
 		bson.M{"lanes.id": laneID},
 		bson.M{"$pull": bson.M{"lanes": bson.M{"id": laneID}}},
 	)
-	return err
+	if err != nil {
+		log.Printf("[ERROR] DeleteLane: database error - laneID=%s, err=%v", laneID, err)
+		return err
+	}
+	if result.ModifiedCount == 0 {
+		log.Printf("[WARN] DeleteLane: lane %s not found in planner", laneID)
+		return fmt.Errorf("lane not found")
+	}
+	log.Printf("[INFO] DeleteLane: successfully deleted lane %s", laneID)
+	return nil
 }
 
 // ReorderLanes updates the positions of lanes in a planner
@@ -349,8 +362,11 @@ func HandleUpdateLane(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Extract lane ID from path
+	// Extract lane ID from path - normalize by removing /api prefix if present
 	path := r.URL.Path
+	if strings.HasPrefix(path, "/api") {
+		path = path[len("/api"):]
+	}
 	parts := strings.Split(path, "/")
 	if len(parts) != 5 || parts[1] != "planner" || parts[3] != "lane" {
 		httputil.WriteJSONError(w, r, "Invalid path", http.StatusBadRequest)
@@ -388,8 +404,11 @@ func HandleDeleteLane(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Extract lane ID from path
+	// Extract lane ID from path - normalize by removing /api prefix if present
 	path := r.URL.Path
+	if strings.HasPrefix(path, "/api") {
+		path = path[len("/api"):]
+	}
 	parts := strings.Split(path, "/")
 	if len(parts) != 5 || parts[1] != "planner" || parts[3] != "lane" {
 		httputil.WriteJSONError(w, r, "Invalid path", http.StatusBadRequest)
@@ -398,7 +417,11 @@ func HandleDeleteLane(w http.ResponseWriter, r *http.Request) {
 	laneID := parts[4]
 
 	if err := DeleteLane(r.Context(), laneID); err != nil {
-		httputil.WriteJSONError(w, r, err.Error(), http.StatusInternalServerError)
+		if err.Error() == "lane not found" {
+			httputil.WriteJSONError(w, r, "Lane not found", http.StatusNotFound)
+		} else {
+			httputil.WriteJSONError(w, r, err.Error(), http.StatusInternalServerError)
+		}
 		return
 	}
 
@@ -412,8 +435,11 @@ func HandleSplitLane(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Extract lane ID from path
+	// Extract lane ID from path - normalize by removing /api prefix if present
 	path := r.URL.Path
+	if strings.HasPrefix(path, "/api") {
+		path = path[len("/api"):]
+	}
 	parts := strings.Split(path, "/")
 	if len(parts) != 6 || parts[1] != "planner" || parts[3] != "lane" || parts[5] != "split" {
 		httputil.WriteJSONError(w, r, "Invalid path", http.StatusBadRequest)
