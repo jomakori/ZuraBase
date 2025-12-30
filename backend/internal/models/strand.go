@@ -50,6 +50,10 @@ type Strand struct {
 	Attachments     []FileAttachment `json:"attachments,omitempty" bson:"attachments,omitempty"`
 	CreatedAt       time.Time        `json:"created_at" bson:"created_at"`
 	UpdatedAt       time.Time        `json:"updated_at" bson:"updated_at"`
+	// LinkMetadata stores original URLs and extraction results
+	// URLs are removed before LLM processing but preserved here for reference
+	LinkMetadata     []LinkMetadata `json:"link_metadata,omitempty" bson:"link_metadata,omitempty"`
+	HasProcessedURLs bool           `json:"has_processed_urls" bson:"has_processed_urls"`
 }
 
 var strandCollection *mongo.Collection

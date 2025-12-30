@@ -25,6 +25,18 @@ test_be: clean_compose conditional_down
 		--mount docker-compose.yml \
 		--command 'docker-compose up backend-test --build'
 
+test_be_specific: clean_compose conditional_down
+	@if [ -z "$(TEST_PATTERN)" ]; then \
+		echo "Usage: make test_be_specific TEST_PATTERN=<pattern>"; \
+		echo "Ex) make test_be_specific TEST_PATTERN=TestFirecrawlService"; \
+		exit 1; \
+	fi
+	doppler secrets --config dev_testing && \
+	doppler run --config dev_testing \
+		--mount-template doppler-compose.yml \
+		--mount docker-compose.yml \
+		--command 'docker-compose run --build --rm backend-test go test -v ./tests -run $(TEST_PATTERN) -timeout 30s'
+
 test_fe: clean_compose conditional_down
 	doppler secrets --config dev_testing && \
 	doppler run --config dev_testing \

@@ -4,11 +4,14 @@ import { BrowserRouter } from "react-router-dom";
 import SettingsPage from "./SettingsPage";
 
 // Mock the LLMProfilesSettings component
-jest.mock("./LLMProfilesSettings", () => {
-  return function MockLLMProfilesSettings() {
-    return <div data-testid="llm-profiles-settings">LLM Profiles Settings</div>;
-  };
-});
+const MockLLMProfilesSettings = () => {
+  return React.createElement("div", { "data-testid": "llm-profiles-settings" }, "LLM Profiles Settings");
+};
+
+jest.mock("./LLMProfilesSettings", () => ({
+  __esModule: true,
+  default: MockLLMProfilesSettings,
+}));
 
 describe("SettingsPage", () => {
   const renderWithRouter = (component: React.ReactElement) => {

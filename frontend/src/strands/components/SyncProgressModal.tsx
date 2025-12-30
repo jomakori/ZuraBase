@@ -27,14 +27,24 @@ export interface SyncProgress {
   message?: string;
   currentOperation?: string;
   aiSteps?: AIStep[]; // Detailed AI operation steps for the current item
-  thinkingMessage?: string; // Current AI thinking/processing message for the current item
+  processingMessage?: string; // Processing context for the current item
+  // URL processing information
+  detectedUrlCount?: number; // Total URLs detected in current strand
+  extractedUrlCount?: number; // Successfully extracted URLs
+  unsupportedUrlCount?: number; // URLs unsupported by Firecrawl
+  urlProcessingMessage?: string; // Message about URL processing status
   strandProgress?: {
     strandId: string;
     strandTitle: string;
     status: "pending" | "active" | "completed" | "error" | "cancelled";
     message?: string;
     aiSteps?: AIStep[]; // AI steps for this specific strand
-    thinkingMessage?: string; // Thinking message for this specific strand
+    processingMessage?: string; // Thinking message for this specific strand
+    // URL processing information for individual strands
+    detectedUrlCount?: number;
+    extractedUrlCount?: number;
+    unsupportedUrlCount?: number;
+    urlProcessingMessage?: string;
   }[]; // Progress for individual strands in multi-sync
 }
 
@@ -239,9 +249,34 @@ const SyncProgressModal: React.FC<SyncProgressModalProps> = ({
                           ))}
                         </div>
                       )}
-                    {strand.status === "active" && strand.thinkingMessage && (
+                    {/* URL processing info for individual strands */}
+                    {(strand.detectedUrlCount !== undefined ||
+                      strand.extractedUrlCount !== undefined ||
+                      strand.unsupportedUrlCount !== undefined) && (
+                      <div className="mt-2 space-y-1">
+                        {strand.detectedUrlCount !== undefined && (
+                          <div className="flex items-center gap-1 text-xs text-gray-600">
+                            <span className="font-medium">URLs:</span>
+                            <span>{strand.detectedUrlCount} detected</span>
+                          </div>
+                        )}
+                        {strand.extractedUrlCount !== undefined && (
+                          <div className="flex items-center gap-1 text-xs text-green-600">
+                            <span className="font-medium">Extracted:</span>
+                            <span>{strand.extractedUrlCount}</span>
+                          </div>
+                        )}
+                        {strand.unsupportedUrlCount !== undefined && strand.unsupportedUrlCount > 0 && (
+                          <div className="flex items-center gap-1 text-xs text-amber-600">
+                            <span className="font-medium">Unsupported:</span>
+                            <span>{strand.unsupportedUrlCount}</span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    {strand.status === "active" && strand.processingMessage && (
                       <div className="mt-2 text-xs italic text-blue-700">
-                        AI Thinking: {strand.thinkingMessage}
+                        AI Thinking: {strand.processingMessage}
                       </div>
                     )}
                   </div>
@@ -353,7 +388,7 @@ const SyncProgressModal: React.FC<SyncProgressModalProps> = ({
             )}
 
           {/* Thinking Message - Similar to ChatGPT's thinking indicator */}
-          {progress.total === 1 && isSyncing && progress.thinkingMessage && (
+          {progress.total === 1 && isSyncing && progress.processingMessage && (
             <div className="bg-gradient-to-r from-blue-50 to-indigo-50 p-4 rounded-md border border-blue-200">
               <div className="flex items-start gap-3">
                 <div className="flex-shrink-0">
@@ -364,9 +399,64 @@ const SyncProgressModal: React.FC<SyncProgressModalProps> = ({
                     AI Thinking
                   </div>
                   <div className="text-sm text-blue-800 italic">
-                    {progress.thinkingMessage}
+                    {progress.processingMessage}
                   </div>
                 </div>
+              </div>
+            </div>
+          )}
+
+          {/* URL Processing Information */}
+          {(progress.detectedUrlCount !== undefined ||
+            progress.extractedUrlCount !== undefined ||
+            progress.unsupportedUrlCount !== undefined) && (
+            <div className="space-y-2 animate-fadeIn">
+              <div className="text-xs font-medium text-gray-500 uppercase tracking-wide">
+                Processing URLs...
+              </div>
+              <div className="bg-gray-50 p-3 rounded-md border border-gray-200 transition-all duration-300 hover:bg-gray-100">
+                {/* Detected URLs */}
+                {progress.detectedUrlCount !== undefined && (
+                  <div className="flex items-center justify-between mb-2 transition-all duration-300">
+                    <div className="text-sm text-gray-700">Detected URLs</div>
+                    <div className="text-sm font-medium text-gray-900 animate-pulse">
+                      {progress.detectedUrlCount}
+                    </div>
+                  </div>
+                )}
+                {/* Successfully extracted URLs */}
+                {progress.extractedUrlCount !== undefined && (
+                  <div className="flex items-center justify-between mb-2 transition-all duration-300">
+                    <div className="text-sm text-gray-700">Successfully extracted</div>
+                    <div className="text-sm font-medium text-green-600 animate-bounce">
+                      {progress.extractedUrlCount}
+                    </div>
+                  </div>
+                )}
+                {/* Unsupported URLs */}
+                {progress.unsupportedUrlCount !== undefined && progress.unsupportedUrlCount > 0 && (
+                  <>
+                    <div className="flex items-center justify-between mb-2 transition-all duration-300">
+                      <div className="text-sm text-gray-700">Unsupported by Firecrawl</div>
+                      <div className="text-sm font-medium text-amber-600 animate-pulse">
+                        {progress.unsupportedUrlCount}
+                      </div>
+                    </div>
+                    <div className="mt-2 p-2 bg-amber-50 border border-amber-200 rounded-md transition-all duration-300 hover:bg-amber-100">
+                      <div className="flex items-center gap-1 text-xs text-amber-800">
+                        <Warning size={12} className="text-amber-600" weight="fill" />
+                        <span className="font-medium">Warning:</span>
+                        <span>{progress.unsupportedUrlCount} URL(s) could not be processed by Firecrawl. The AI will analyze the remaining content.</span>
+                      </div>
+                    </div>
+                  </>
+                )}
+                {/* URL processing message */}
+                {progress.urlProcessingMessage && (
+                  <div className="mt-2 text-xs text-gray-600 italic transition-all duration-300">
+                    {progress.urlProcessingMessage}
+                  </div>
+                )}
               </div>
             </div>
           )}

@@ -3,7 +3,7 @@
  * Verifies structured logging, environment modes, and correlation ID handling
  */
 
-import { ClientLogger } from './clientLogger';
+import * as ClientLoggerModule from './clientLogger';
 import logger from './clientLogger';
 
 // Mock fetch for testing
@@ -11,7 +11,7 @@ global.fetch = jest.fn();
 const mockFetch = fetch as jest.MockedFunction<typeof fetch>;
 
 describe('ClientLogger', () => {
-  let logger: ClientLogger;
+  let logger: ClientLoggerModule.ClientLogger;
 
   beforeEach(() => {
     // Reset mocks
@@ -20,7 +20,7 @@ describe('ClientLogger', () => {
     sessionStorage.clear();
 
     // Create logger instance for testing
-    logger = new ClientLogger({
+    logger = new ClientLoggerModule.ClientLogger({
       environment: 'development',
       component: 'TestComponent'
     });
@@ -70,7 +70,7 @@ describe('ClientLogger', () => {
     });
 
     it('should not log to console in production mode for non-error levels', () => {
-      const productionLogger = new ClientLogger({
+      const productionLogger = new ClientLoggerModule.ClientLogger({
         environment: 'production',
         component: 'TestComponent'
       });
@@ -84,7 +84,7 @@ describe('ClientLogger', () => {
     });
 
     it('should still log errors to console in production mode', () => {
-      const productionLogger = new ClientLogger({
+      const productionLogger = new ClientLoggerModule.ClientLogger({
         environment: 'production',
         component: 'TestComponent'
       });
@@ -189,7 +189,7 @@ describe('ClientLogger', () => {
     });
 
     it('should batch logs in production mode', async () => {
-      const productionLogger = new ClientLogger({
+      const productionLogger = new ClientLoggerModule.ClientLogger({
         environment: 'production',
         component: 'TestComponent',
         batchInterval: 1000,
@@ -220,7 +220,7 @@ describe('ClientLogger', () => {
     });
 
     it('should flush logs on timer in production mode', async () => {
-      const productionLogger = new ClientLogger({
+      const productionLogger = new ClientLoggerModule.ClientLogger({
         environment: 'production',
         component: 'TestComponent',
         batchInterval: 1000,
@@ -241,7 +241,7 @@ describe('ClientLogger', () => {
 
   describe('Error Handling', () => {
     it('should handle fetch errors gracefully', async () => {
-      const productionLogger = new ClientLogger({
+      const productionLogger = new ClientLoggerModule.ClientLogger({
         environment: 'production',
         component: 'TestComponent'
       });
@@ -265,7 +265,7 @@ describe('ClientLogger', () => {
     it('should persist session ID across instances', () => {
       const sessionId = logger.getCorrelationId();
       
-      const newLogger = new ClientLogger({
+      const newLogger = new ClientLoggerModule.ClientLogger({
         environment: 'development',
         component: 'NewComponent'
       });
@@ -276,7 +276,7 @@ describe('ClientLogger', () => {
     it('should generate new session ID if not in storage', () => {
       sessionStorage.clear();
       
-      const newLogger = new ClientLogger({
+      const newLogger = new ClientLoggerModule.ClientLogger({
         environment: 'development',
         component: 'NewComponent'
       });
@@ -308,8 +308,8 @@ describe('ClientLogger Usage Examples', () => {
 
   it('should demonstrate custom logger creation', () => {
     // Create custom logger for specific component
-    const customLogger = new ClientLogger({
-      environment: import.meta.env.MODE === 'development' ? 'development' : 'production',
+    const customLogger = new ClientLoggerModule.ClientLogger({
+      environment: 'production',
       component: 'PlannerApp',
       batchInterval: 3000, // 3 seconds
       maxBatchSize: 25

@@ -5,8 +5,6 @@ export default {
   moduleNameMapper: {
     "\\.(css|less|scss|sass)$": "<rootDir>/src/__mocks__/styleMock.js",
     "^@milkdown/(.*)$": "<rootDir>/src/__mocks__/milkdownMock.tsx",
-    "^./App$": "<rootDir>/src/__mocks__/AppMock.tsx",
-    "^../src/components/App$": "<rootDir>/src/__mocks__/AppMock.tsx",
     "^./MarkdownEditor$": "<rootDir>/src/__mocks__/MarkdownEditor.tsx",
     // Mock import.meta.env for tests
     "^import\\.meta\\.env$": "<rootDir>/src/__mocks__/envMock.js",
@@ -16,11 +14,18 @@ export default {
       "ts-jest",
       {
         useESM: false,
-        tsconfig: "tsconfig.json",
+        tsconfig: {
+          jsx: "react-jsx",
+          esModuleInterop: true,
+          allowSyntheticDefaultImports: true,
+          target: "ES2020",
+          module: "commonjs",
+        },
+        babelConfig: true,
       },
     ],
   },
-  transformIgnorePatterns: ["/node_modules/(?!(@milkdown|lodash-es)/)"],
+  transformIgnorePatterns: ["/node_modules/(?!(@milkdown|lodash-es|react-markdown)/)"],
   setupFilesAfterEnv: ["<rootDir>/src/setupTests.ts"],
   testEnvironmentOptions: {
     customExportConditions: ["node", "node-addons"],

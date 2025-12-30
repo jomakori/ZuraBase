@@ -8,8 +8,10 @@ import (
 	"strings"
 	"time"
 
-	"go.uber.org/zap"
+	"zurabase/internal/auth"
 	"zurabase/internal/services"
+
+	"go.uber.org/zap"
 )
 
 // LogEntry represents a structured log entry from the frontend
@@ -73,6 +75,28 @@ func HandleLogIngestion(w http.ResponseWriter, r *http.Request) {
 			services.String("method", r.Method),
 			services.String("expected", "POST"))
 		http.Error(w, `{"error": "method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Check authentication
+	authHeader := r.Header.Get("Authorization")
+	if authHeader == "" {
+		logger.Warn("Missing authorization header")
+		http.Error(w, `{"error": "missing authorization"}`, http.StatusUnauthorized)
+		return
+	}
+
+	if !strings.HasPrefix(authHeader, "Bearer ") {
+		logger.Warn("Invalid authorization header format")
+		http.Error(w, `{"error": "invalid authorization format"}`, http.StatusUnauthorized)
+		return
+	}
+
+	tokenStr := strings.TrimPrefix(authHeader, "Bearer ")
+	_, err := auth.ValidateToken(tokenStr)
+	if err != nil {
+		logger.Warn("Invalid or expired token", services.Error(err))
+		http.Error(w, `{"error": "invalid or expired token"}`, http.StatusUnauthorized)
 		return
 	}
 

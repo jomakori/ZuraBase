@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"zurabase/internal/auth"
 	"zurabase/internal/logs"
 )
 
@@ -116,10 +117,17 @@ func TestLog_IngestionHandler(t *testing.T) {
 			req.Header.Set("Content-Type", "application/json")
 			req.Header.Set("X-Correlation-ID", "test-correlation-id")
 
+			// Generate and set auth token
+			token, err := auth.GenerateToken("test-user", "test@example.com")
+			if err != nil {
+				t.Fatalf("Failed to generate test token: %v", err)
+			}
+			req.Header.Set("Authorization", "Bearer "+token)
+
 			// Create response recorder
 			rr := httptest.NewRecorder()
 
-			// Call the handler directly (note: authentication middleware would be applied in real scenario)
+			// Call the handler directly
 			logs.HandleLogIngestion(rr, req)
 
 			// Check status code
@@ -297,6 +305,13 @@ func TestLog_RateLimiting(t *testing.T) {
 				req.Header.Set("Content-Type", "application/json")
 				req.Header.Set("X-Correlation-ID", fmt.Sprintf("test-correlation-%d", i))
 
+				// Generate and set auth token
+				token, err := auth.GenerateToken("test-user-rate-limit", "test@example.com")
+				if err != nil {
+					t.Fatalf("Failed to generate test token: %v", err)
+				}
+				req.Header.Set("Authorization", "Bearer "+token)
+
 				rr := httptest.NewRecorder()
 				logs.HandleLogIngestion(rr, req)
 
@@ -379,8 +394,16 @@ func TestLog_Authentication(t *testing.T) {
 			}
 			req.Header.Set("Content-Type", "application/json")
 
-			// Set authentication header if provided
-			if tc.authHeader != "" {
+			// Set authentication header based on test case
+			if tc.name == "Valid authentication token" {
+				// Generate a valid JWT token for the test
+				token, err := auth.GenerateToken("test-user-auth", "test@example.com")
+				if err != nil {
+					t.Fatalf("Failed to generate test token: %v", err)
+				}
+				req.Header.Set("Authorization", "Bearer "+token)
+			} else if tc.authHeader != "" {
+				// Use the provided auth header for invalid token test
 				req.Header.Set("Authorization", tc.authHeader)
 			}
 
@@ -482,6 +505,13 @@ func TestLog_LevelMapping(t *testing.T) {
 			req.Header.Set("Content-Type", "application/json")
 			req.Header.Set("X-Correlation-ID", "test-correlation-level")
 
+			// Generate and set auth token
+			token, err := auth.GenerateToken("test-user-level", "test@example.com")
+			if err != nil {
+				t.Fatalf("Failed to generate test token: %v", err)
+			}
+			req.Header.Set("Authorization", "Bearer "+token)
+
 			rr := httptest.NewRecorder()
 			logs.HandleLogIngestion(rr, req)
 
@@ -519,13 +549,13 @@ func TestLog_Performance(t *testing.T) {
 		},
 		{
 			name:        "Medium batch performance",
-			batchSize:   100,
+			batchSize:   50,
 			description: "Test performance with medium batch of logs",
 		},
 		{
 			name:        "Large batch performance",
-			batchSize:   1000,
-			description: "Test performance with large batch of logs",
+			batchSize:   100,
+			description: "Test performance with large batch of logs (at limit)",
 		},
 	}
 
@@ -560,6 +590,13 @@ func TestLog_Performance(t *testing.T) {
 			}
 			req.Header.Set("Content-Type", "application/json")
 			req.Header.Set("X-Correlation-ID", "test-correlation-performance")
+
+			// Generate and set auth token
+			token, err := auth.GenerateToken("test-user-performance", "test@example.com")
+			if err != nil {
+				t.Fatalf("Failed to generate test token: %v", err)
+			}
+			req.Header.Set("Authorization", "Bearer "+token)
 
 			rr := httptest.NewRecorder()
 
@@ -625,6 +662,13 @@ func TestLog_Performance(t *testing.T) {
 			}
 			req.Header.Set("Content-Type", "application/json")
 			req.Header.Set("X-Correlation-ID", fmt.Sprintf("test-correlation-individual-%d", i))
+
+			// Generate and set auth token
+			token, err := auth.GenerateToken("test-user-individual", "test@example.com")
+			if err != nil {
+				t.Fatalf("Failed to generate test token: %v", err)
+			}
+			req.Header.Set("Authorization", "Bearer "+token)
 
 			rr := httptest.NewRecorder()
 

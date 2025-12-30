@@ -270,7 +270,14 @@ class ClientLogger {
 }
 
 // Create default logger instance
-const isDevelopment = import.meta.env.MODE === 'development';
+let isDevelopment = false;
+try {
+  isDevelopment = import.meta.env.MODE === 'development';
+} catch (e) {
+  // In CommonJS/Jest environment, import.meta is not available
+  // Check if we're in a test environment or if global.import.meta is defined
+  isDevelopment = (globalThis as any).import?.meta?.env?.MODE === 'development' || false;
+}
 
 const defaultLogger = new ClientLogger({
   environment: isDevelopment ? 'development' : 'production',

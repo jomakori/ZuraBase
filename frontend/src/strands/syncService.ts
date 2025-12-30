@@ -27,15 +27,25 @@ export interface SyncProgress {
   status: "syncing" | "completed" | "error" | "cancelled";
   message?: string;
   currentOperation?: string;
-  aiSteps?: AIStep[]; // Detailed AI operation steps for the current item
-  thinkingMessage?: string; // Current AI thinking/processing message for the current item
+  aiSteps?: AIStep[]; // Detailed operation steps for the current item
+  processingMessage?: string; // Processing context for the current item
+  // URL processing information
+  detectedUrlCount?: number; // Total URLs detected in current strand
+  extractedUrlCount?: number; // Successfully extracted URLs
+  unsupportedUrlCount?: number; // URLs unsupported by Firecrawl
+  urlProcessingMessage?: string; // Message about URL processing status
   strandProgress?: {
     strandId: string;
     strandTitle: string;
     status: "pending" | "active" | "completed" | "error" | "cancelled";
     message?: string;
     aiSteps?: AIStep[]; // AI steps for this specific strand
-    thinkingMessage?: string; // Thinking message for this specific strand
+    processingMessage?: string; // Thinking message for this specific strand
+    // URL processing information for individual strands
+    detectedUrlCount?: number;
+    extractedUrlCount?: number;
+    unsupportedUrlCount?: number;
+    urlProcessingMessage?: string;
   }[]; // Progress for individual strands in multi-sync
 }
 
@@ -76,7 +86,7 @@ export class SyncService {
 
     while (totalElapsedTime < maxPollingDurationSeconds * 1000) {
       if (signal?.aborted) {
-        logger.warn(MODULE, `Polling for strand ${strandId} aborted by user.`);
+        logger.warn(`Polling for strand ${strandId} aborted by user.`, { module: MODULE });
         return { completed: false, error: "Sync cancelled by user" };
       }
 
@@ -87,10 +97,10 @@ export class SyncService {
       );
 
       logger.debug(
-        MODULE,
         `Polling for strand ${strandId} sync completion (attempt ${attempts}, delay ${currentDelay}ms, elapsed ${
           totalElapsedTime / 1000
-        }s)`
+        }s)`,
+        { module: MODULE, attempts, delay: currentDelay, elapsed: totalElapsedTime / 1000 }
       );
 
       await new Promise((resolve) => setTimeout(resolve, currentDelay));
@@ -106,14 +116,14 @@ export class SyncService {
 
         if (!updatedStrand) {
           logger.warn(
-            MODULE,
-            `Polling response for strand ${strandId} returned no strand data.`
+            `Polling response for strand ${strandId} returned no strand data.`,
+            { module: MODULE }
           );
           consecutiveNetworkErrors++;
           if (consecutiveNetworkErrors >= MAX_CONSECUTIVE_NETWORK_ERRORS) {
             logger.error(
-              MODULE,
-              `Circuit breaker tripped for strand ${strandId}: too many consecutive null strand responses.`
+              `Circuit breaker tripped for strand ${strandId}: too many consecutive null strand responses.`,
+              { module: MODULE }
             );
             return {
               completed: false,
@@ -130,16 +140,16 @@ export class SyncService {
         if (updatedStrand.ai_status === "failed") {
           consecutiveAIFailures++;
           logger.warn(
-            MODULE,
             `Strand ${strandId} AI processing failed (attempt ${consecutiveAIFailures}/${MAX_CONSECUTIVE_AI_FAILURES}). Reason: ${
               updatedStrand.ai_failure_reason || "Unknown"
-            }`
+            }`,
+            { module: MODULE }
           );
 
           if (consecutiveAIFailures >= MAX_CONSECUTIVE_AI_FAILURES) {
             logger.error(
-              MODULE,
-              `Strand ${strandId} AI processing failed persistently after ${MAX_CONSECUTIVE_AI_FAILURES} attempts.`
+              `Strand ${strandId} AI processing failed persistently after ${MAX_CONSECUTIVE_AI_FAILURES} attempts.`,
+              { module: MODULE }
             );
             return {
               completed: false,
@@ -159,6 +169,41 @@ export class SyncService {
         const originalHistoryLength = originalStrand.sync_history?.length || 0;
         const updatedHistoryLength = updatedStrand.sync_history?.length || 0;
 
+        // Get the latest sync log entry from the updated strand
+        const latestSyncLog = updatedStrand.sync_history?.[updatedHistoryLength - 1];
+        let detectedUrlCount: number | undefined;
+        let extractedUrlCount: number | undefined;
+        let unsupportedUrlCount: number | undefined;
+        let urlProcessingMessage: string | undefined;
+
+        if (latestSyncLog?.notes) {
+          // Example: "Automatic AI enrichment (3 URL(s) unsupported by Firecrawl, 5 URL(s) extracted)"
+          const unsupportedMatch = latestSyncLog.notes.match(/(\d+) URL\(s\) unsupported by Firecrawl/);
+          const extractedMatch = latestSyncLog.notes.match(/(\d+) URL\(s\) extracted/);
+          const detectedMatch = latestSyncLog.notes.match(/Detected (\d+) URLs/);
+
+          if (unsupportedMatch) {
+            unsupportedUrlCount = parseInt(unsupportedMatch[1]);
+          }
+          if (extractedMatch) {
+            extractedUrlCount = parseInt(extractedMatch[1]);
+          }
+          // If we have either unsupported or extracted, we detected some URLs
+          if (unsupportedUrlCount !== undefined || extractedUrlCount !== undefined) {
+            detectedUrlCount = (unsupportedUrlCount || 0) + (extractedUrlCount || 0);
+          }
+          // For messages, prioritize unsupported if present, otherwise extracted
+          if (unsupportedUrlCount !== undefined && unsupportedUrlCount > 0) {
+            urlProcessingMessage = `${unsupportedUrlCount} URL(s) unsupported`;
+          } else if (extractedUrlCount !== undefined && extractedUrlCount > 0) {
+            urlProcessingMessage = `${extractedUrlCount} URL(s) extracted`;
+          }
+          if (detectedMatch) {
+            detectedUrlCount = parseInt(detectedMatch[1]);
+            urlProcessingMessage = `Processing ${detectedUrlCount} URLs...`;
+          }
+        }
+
         const syncCompleted = updatedStrand.synced_with_ai;
         const hasMeaningfulChanges =
           updatedHistoryLength > originalHistoryLength ||
@@ -168,8 +213,8 @@ export class SyncService {
 
         if (syncCompleted && hasMeaningfulChanges) {
           logger.debug(
-            MODULE,
-            `Strand ${strandId} sync completed with meaningful changes.`
+            `Strand ${strandId} sync completed with meaningful changes.`,
+            { module: MODULE }
           );
           return { completed: true, updatedStrand };
         }
@@ -179,24 +224,43 @@ export class SyncService {
         if (syncCompleted && attempts > MAX_CONSECUTIVE_NETWORK_ERRORS) {
           // Use network errors as a general threshold for "stuck" polling
           logger.debug(
-            MODULE,
-            `Strand ${strandId} marked as synced but no meaningful changes detected, considering sync complete after ${attempts} attempts.`
+            `Strand ${strandId} marked as synced but no meaningful changes detected, considering sync complete after ${attempts} attempts.`,
+            { module: MODULE }
           );
           return { completed: true, updatedStrand };
         }
+
+        // Report progress back with URL processing info
+        if (onProgress) {
+          onProgress({
+            total: 1,
+            completed: 0,
+            failed: 0,
+            currentItem: this.getStrandTitle(updatedStrand),
+            status: "syncing",
+            message: `AI processing strand: ${this.getStrandTitle(updatedStrand)}`,
+            currentOperation: "AI Processing",
+            aiSteps: aiSteps, // Pass the current AI steps
+            processingMessage: "Analyzing content and extracting key insights...",
+            detectedUrlCount,
+            extractedUrlCount,
+            unsupportedUrlCount,
+            urlProcessingMessage,
+          });
+        }
+
       } catch (err) {
         logger.error(
-          MODULE,
           `Error polling for sync status for strand ${strandId}: ${
             err instanceof Error ? err.message : String(err)
           }`,
-          err as Error
+          { module: MODULE, error: err }
         );
         consecutiveNetworkErrors++;
         if (consecutiveNetworkErrors >= MAX_CONSECUTIVE_NETWORK_ERRORS) {
           logger.error(
-            MODULE,
-            `Circuit breaker tripped for strand ${strandId}: too many consecutive network errors.`
+            `Circuit breaker tripped for strand ${strandId}: too many consecutive network errors.`,
+            { module: MODULE }
           );
           return {
             completed: false,
@@ -210,8 +274,8 @@ export class SyncService {
     }
 
     logger.warn(
-      MODULE,
-      `Strand ${strandId} sync polling timed out after ${MAX_POLLING_DURATION_SECONDS} seconds and ${attempts} attempts.`
+      `Strand ${strandId} sync polling timed out after ${MAX_POLLING_DURATION_SECONDS} seconds and ${attempts} attempts.`,
+      { module: MODULE }
     );
     return {
       completed: false,
@@ -266,9 +330,20 @@ export class SyncService {
       },
     ];
 
+    // Initial progress update for URL processing detection
+    // This assumes URL detection happens very early in the backend.
+    // We'll update these counts as more detailed info comes from polling.
+    let initialDetectedUrlCount: number | undefined;
+    if (strand.content) {
+      const detectedUrls = new LinkProcessor().DetectURLs(strand.content); // Use a temporary LinkProcessor for initial detection
+      if (detectedUrls.length > 0) {
+        initialDetectedUrlCount = detectedUrls.length;
+      }
+    }
+
     try {
       // Notify start
-      logger.debug(MODULE, `Starting sync for single strand ${strand.id}`);
+      logger.debug(`Starting sync for single strand ${strand.id}`, { module: MODULE });
 
       if (onProgress) {
         onProgress({
@@ -280,7 +355,9 @@ export class SyncService {
           message: "Preparing strand for AI processing...",
           currentOperation: "Processing input",
           aiSteps: [...aiSteps],
-          thinkingMessage: "Analyzing your content...",
+          processingMessage: "Analyzing your content...",
+          detectedUrlCount: initialDetectedUrlCount,
+          urlProcessingMessage: initialDetectedUrlCount ? `Detected ${initialDetectedUrlCount} URL(s)` : undefined,
         });
       }
 
@@ -298,16 +375,18 @@ export class SyncService {
           status: "syncing",
           currentOperation: "Connecting to AI",
           aiSteps: [...aiSteps],
-          thinkingMessage: "Establishing connection with AI service...",
+          processingMessage: "Establishing connection with AI service...",
+          detectedUrlCount: initialDetectedUrlCount,
+          urlProcessingMessage: initialDetectedUrlCount ? `Detected ${initialDetectedUrlCount} URL(s)` : undefined,
         });
       }
 
       // Initiate sync
-      logger.debug(MODULE, `Calling StrandsApi.syncStrand for ${strand.id}`);
+      logger.debug(`Calling StrandsApi.syncStrand for ${strand.id}`, { module: MODULE });
       await StrandsApi.syncStrand(strand.id);
       logger.debug(
-        MODULE,
-        `StrandsApi.syncStrand call returned for ${strand.id}`
+        `StrandsApi.syncStrand call returned for ${strand.id}`,
+        { module: MODULE }
       );
 
       // Step 2: Connected to AI
@@ -324,8 +403,10 @@ export class SyncService {
           message: "Syncing with AI...",
           currentOperation: "Syncing strand with AI",
           aiSteps: [...aiSteps],
-          thinkingMessage:
+          processingMessage:
             "AI is analyzing your content and extracting key insights...",
+          detectedUrlCount: initialDetectedUrlCount,
+          urlProcessingMessage: initialDetectedUrlCount ? `Detected ${initialDetectedUrlCount} URL(s)` : undefined,
         });
       }
 
@@ -355,6 +436,42 @@ export class SyncService {
         aiSteps[2].status = "completed";
         aiSteps[3].status = "completed";
 
+        // Re-fetch the updated strand to get the latest sync log for final URL counts
+        const finalStrandResponse = await StrandsApi.getStrand(strand.id);
+        const finalStrand = finalStrandResponse.strand;
+        let finalDetectedUrlCount: number | undefined;
+        let finalExtractedUrlCount: number | undefined;
+        let finalUnsupportedUrlCount: number | undefined;
+        let finalUrlProcessingMessage: string | undefined;
+
+        if (finalStrand?.sync_history) {
+          const latestFinalSyncLog = finalStrand.sync_history[finalStrand.sync_history.length - 1];
+          if (latestFinalSyncLog?.notes) {
+            const unsupportedMatch = latestFinalSyncLog.notes.match(/(\d+) URL\(s\) unsupported by Firecrawl/);
+            const extractedMatch = latestFinalSyncLog.notes.match(/(\d+) URL\(s\) extracted/);
+            const detectedMatch = latestFinalSyncLog.notes.match(/Detected (\d+) URLs/);
+
+            if (unsupportedMatch) {
+              finalUnsupportedUrlCount = parseInt(unsupportedMatch[1]);
+            }
+            if (extractedMatch) {
+              finalExtractedUrlCount = parseInt(extractedMatch[1]);
+            }
+            if (unsupportedMatch || extractedMatch) {
+              finalDetectedUrlCount = (finalUnsupportedUrlCount || 0) + (finalExtractedUrlCount || 0);
+            }
+            if (finalUnsupportedUrlCount !== undefined && finalUnsupportedUrlCount > 0) {
+              finalUrlProcessingMessage = `${finalUnsupportedUrlCount} URL(s) unsupported`;
+            } else if (finalExtractedUrlCount !== undefined && finalExtractedUrlCount > 0) {
+              finalUrlProcessingMessage = `${finalExtractedUrlCount} URL(s) extracted`;
+            }
+            if (detectedMatch) {
+              finalDetectedUrlCount = parseInt(detectedMatch[1]);
+              finalUrlProcessingMessage = `Detected ${finalDetectedUrlCount} URLs`;
+            }
+          }
+        }
+
         if (onProgress) {
           onProgress({
             total: 1,
@@ -364,9 +481,13 @@ export class SyncService {
             message: "Strand synced successfully!",
             currentOperation: "Applying changes",
             aiSteps: [...aiSteps],
+            detectedUrlCount: finalDetectedUrlCount,
+            extractedUrlCount: finalExtractedUrlCount,
+            unsupportedUrlCount: finalUnsupportedUrlCount,
+            urlProcessingMessage: finalUrlProcessingMessage,
           });
         }
-        logger.debug(MODULE, `Single strand ${strand.id} synced successfully`);
+        logger.debug(`Single strand ${strand.id} synced successfully`, { module: MODULE });
         return {
           success: true,
           strandId: strand.id,
@@ -396,11 +517,14 @@ export class SyncService {
             message: error,
             currentOperation: "Sync failed",
             aiSteps: [...aiSteps],
+            // Include any available URL processing info on error
+            detectedUrlCount: initialDetectedUrlCount, // Use initial detected count on error
+            urlProcessingMessage: initialDetectedUrlCount ? `Detected ${initialDetectedUrlCount} URL(s)` : undefined,
           });
         }
         logger.error(
-          MODULE,
-          `Single strand ${strand.id} sync failed: ${error}`
+          `Single strand ${strand.id} sync failed: ${error}`,
+          { module: MODULE }
         );
         return {
           success: false,
@@ -412,9 +536,8 @@ export class SyncService {
     } catch (err) {
       const error = this.formatError(err);
       logger.error(
-        MODULE,
         `Unexpected error during single strand sync for ${strand.id}`,
-        err as Error
+        { module: MODULE, error: err }
       );
 
       // Mark all active/pending AI steps as error
@@ -434,6 +557,9 @@ export class SyncService {
           message: error,
           currentOperation: "Sync failed",
           aiSteps: [...aiSteps],
+          // Include any available URL processing info on error
+          detectedUrlCount: initialDetectedUrlCount, // Use initial detected count on error
+          urlProcessingMessage: initialDetectedUrlCount ? `Detected ${initialDetectedUrlCount} URL(s)` : undefined,
         });
       }
 
@@ -465,7 +591,11 @@ export class SyncService {
       status: "pending" | "active" | "completed" | "error" | "cancelled";
       message?: string;
       aiSteps?: AIStep[];
-      thinkingMessage?: string;
+      processingMessage?: string;
+      detectedUrlCount?: number;
+      extractedUrlCount?: number;
+      unsupportedUrlCount?: number;
+      urlProcessingMessage?: string;
     }[] = strands.map((s) => ({
       strandId: s.id,
       strandTitle: this.getStrandTitle(s),
@@ -478,13 +608,13 @@ export class SyncService {
     const signal = options.signal || this.abortController.signal;
 
     logger.debug(
-      MODULE,
-      `Starting multi-strand sync for ${strands.length} strands`
+      `Starting multi-strand sync for ${strands.length} strands`,
+      { module: MODULE }
     );
     try {
       for (const strand of strands) {
         if (signal.aborted) {
-          logger.warn(MODULE, "Multi-strand sync aborted by user");
+          logger.warn("Multi-strand sync aborted by user", { module: MODULE });
           // Add cancelled results for remaining strands
           for (let i = completed; i < strands.length; i++) {
             results.push({
@@ -516,6 +646,20 @@ export class SyncService {
           strandProgress[currentStrandIndex].message = "Processing...";
         }
 
+        // Initial URL detection for multi-sync strands
+        let initialDetectedUrlCountForMulti: number | undefined;
+        // Reusing the LinkProcessor from the SyncService if available (e.g., if Firecrawl API key is set)
+        // Otherwise, creating a temporary instance for simple URL detection.
+        const tempLinkProcessor = new LinkProcessor(); // Assuming LinkProcessor can be instantiated without backend dependencies for just DetectURLs
+        if (strand.content) {
+          const detectedUrls = tempLinkProcessor.DetectURLs(strand.content);
+          if (detectedUrls.length > 0) {
+            initialDetectedUrlCountForMulti = detectedUrls.length;
+            strandProgress[currentStrandIndex].detectedUrlCount = initialDetectedUrlCountForMulti;
+            strandProgress[currentStrandIndex].urlProcessingMessage = `Detected ${initialDetectedUrlCountForMulti} URL(s)`;
+          }
+        }
+
         if (onProgress) {
           onProgress({
             total: strands.length,
@@ -528,13 +672,16 @@ export class SyncService {
             }...`,
             currentOperation: "Processing input",
             strandProgress: [...strandProgress], // Pass a copy to ensure immutability
+            // Also pass overall URL counts if applicable (though this is for single strand mostly)
+            detectedUrlCount: initialDetectedUrlCountForMulti,
+            urlProcessingMessage: initialDetectedUrlCountForMulti ? `Detected ${initialDetectedUrlCountForMulti} URL(s)` : undefined,
           });
         }
 
         // Sync the strand
         logger.debug(
-          MODULE,
-          `Initiating sync for strand ${strand.id} in multi-sync operation`
+          `Initiating sync for strand ${strand.id} in multi-sync operation`,
+          { module: MODULE }
         );
         const result = await this.syncSingle(strand, {
           signal,
@@ -546,7 +693,12 @@ export class SyncService {
                 status: p.status === "syncing" ? ("active" as const) : p.status,
                 message: p.message,
                 aiSteps: p.aiSteps,
-                thinkingMessage: p.thinkingMessage,
+                processingMessage: p.processingMessage,
+                // Pass URL processing info from single sync progress
+                detectedUrlCount: p.detectedUrlCount,
+                extractedUrlCount: p.extractedUrlCount,
+                unsupportedUrlCount: p.unsupportedUrlCount,
+                urlProcessingMessage: p.urlProcessingMessage,
               };
               onProgress?.({
                 total: strands.length,
@@ -559,14 +711,19 @@ export class SyncService {
                 }...`,
                 currentOperation: p.currentOperation,
                 aiSteps: p.aiSteps,
-                thinkingMessage: p.thinkingMessage,
+                processingMessage: p.processingMessage,
                 strandProgress: [...strandProgress],
+                // Aggregate URL counts if needed for overall progress, or just pass current strand's
+                detectedUrlCount: p.detectedUrlCount,
+                extractedUrlCount: p.extractedUrlCount,
+                unsupportedUrlCount: p.unsupportedUrlCount,
+                urlProcessingMessage: p.urlProcessingMessage,
               });
             }
           },
         });
         results.push(result);
-        logger.debug(MODULE, `Sync result for strand ${strand.id}`, { result });
+        logger.debug(`Sync result for strand ${strand.id}`, { module: MODULE, result });
 
         if (result.success) {
           completed++;
@@ -583,7 +740,13 @@ export class SyncService {
             ? "Completed"
             : result.error || "Failed";
           strandProgress[currentStrandIndex].aiSteps = undefined; // Clear AI steps after completion/failure
-          strandProgress[currentStrandIndex].thinkingMessage = undefined; // Clear thinking message
+          strandProgress[currentStrandIndex].processingMessage = undefined; // Clear thinking message
+          // Clear URL processing info for completed strand, or keep final counts if desired
+          // For now, let's clear them as it's not the active strand anymore
+          strandProgress[currentStrandIndex].detectedUrlCount = undefined;
+          strandProgress[currentStrandIndex].extractedUrlCount = undefined;
+          strandProgress[currentStrandIndex].unsupportedUrlCount = undefined;
+          strandProgress[currentStrandIndex].urlProcessingMessage = undefined;
         }
 
         // Notify progress after completion
@@ -600,8 +763,8 @@ export class SyncService {
         }
       }
       logger.debug(
-        MODULE,
-        `Multi-strand sync loop finished. Completed: ${completed}, Failed: ${failed}`
+        `Multi-strand sync loop finished. Completed: ${completed}, Failed: ${failed}`,
+        { module: MODULE }
       );
 
       // Final status
@@ -640,9 +803,8 @@ export class SyncService {
         onComplete(results);
       }
       logger.debug(
-        MODULE,
         `Multi-strand sync operation completed with status: ${finalStatus}`,
-        { results }
+        { module: MODULE, results }
       );
 
       return results;
@@ -664,7 +826,7 @@ export class SyncService {
           strandProgress: [...strandProgress],
         });
       }
-      logger.error(MODULE, "Error during multi-strand sync", err as Error);
+      logger.error("Error during multi-strand sync", { module: MODULE, error: err });
 
       throw err;
     } finally {
@@ -735,3 +897,15 @@ export class SyncService {
 
 // Export singleton instance
 export const syncService = new SyncService();
+
+// Temporary LinkProcessor for initial URL detection in frontend
+// This is a simplified version for client-side detection only and does not perform actual network requests.
+class LinkProcessor {
+  private urlPattern = /https?:\/\/[^\s\)]+/g;
+
+  DetectURLs(content: string): string[] {
+    const matches = [...content.matchAll(this.urlPattern)];
+    const urls = matches.map(match => match[0].replace(/[.,;:!?)]+$/, '')); // Trim trailing punctuation
+    return [...new Set(urls)]; // Return unique URLs
+  }
+}

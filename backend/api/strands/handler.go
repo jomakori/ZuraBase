@@ -27,6 +27,30 @@ func Initialize() error {
 	return nil
 }
 
+// getFirecrawlService creates a FirecrawlService instance using environment variables.
+// Returns nil if FIRECRAWL_API_KEY is not set.
+func getFirecrawlService() *services.FirecrawlService {
+	apiKey := os.Getenv("FIRECRAWL_API_KEY")
+	if apiKey == "" {
+		log.Printf("[WARN] FIRECRAWL_API_KEY not set, link processing disabled")
+		return nil
+	}
+	baseURL := os.Getenv("FIRECRAWL_BASE_URL")
+	service := services.NewFirecrawlService(apiKey, baseURL)
+	log.Printf("[DEBUG] FirecrawlService initialized")
+	return service
+}
+
+// getLinkProcessor creates a LinkProcessor instance using a FirecrawlService.
+// Returns nil if FirecrawlService cannot be created.
+func getLinkProcessor() *services.LinkProcessor {
+	firecrawlService := getFirecrawlService()
+	if firecrawlService == nil {
+		return nil
+	}
+	return services.NewLinkProcessor(firecrawlService)
+}
+
 // getAIClientForUser creates an LLMClient for a specific user using their default LLM profile.
 // It strictly attempts to create a LangChainClient. If the profile is invalid or
 // LangChainClient creation fails, it returns an error.
@@ -339,6 +363,38 @@ func enrichStrandWithAI(ctx context.Context, strand *models.Strand) EnrichmentRe
 
 	log.Printf("[DEBUG] enrichStrandWithAI: Tag service created successfully for strand %s", strand.ID)
 
+	// --- Link Processing ---
+	contentForAI := strand.Content
+	hasProcessedURLs := false
+
+	linkProcessor := getLinkProcessor()
+	if linkProcessor != nil {
+		log.Printf("[DEBUG] enrichStrandWithAI: Link processor available, detecting URLs in strand %s", strand.ID)
+		urls := linkProcessor.DetectURLs(strand.Content)
+		if len(urls) > 0 {
+			log.Printf("[INFO] enrichStrandWithAI: Detected %d URLs in strand %s: %v", len(urls), strand.ID, urls)
+			// Extract and combine content from URLs
+			combined, metadata, err := linkProcessor.ExtractAndCombine(ctx, strand.Content, urls)
+			if err != nil {
+				log.Printf("[WARN] enrichStrandWithAI: URL extraction failed for strand %s: %v", strand.ID, err)
+				// Continue with original content
+			} else {
+				// Store link metadata in strand
+				strand.LinkMetadata = metadata
+				strand.HasProcessedURLs = true
+				hasProcessedURLs = true
+				log.Printf("[INFO] enrichStrandWithAI: Successfully extracted content from %d URLs for strand %s", len(metadata), strand.ID)
+				// Remove URLs from combined content before sending to LLM
+				contentForAI = linkProcessor.RemoveURLs(combined)
+				log.Printf("[DEBUG] enrichStrandWithAI: Cleaned content length: %d (original: %d)", len(contentForAI), len(strand.Content))
+			}
+		} else {
+			log.Printf("[DEBUG] enrichStrandWithAI: No URLs detected in strand %s", strand.ID)
+		}
+	} else {
+		log.Printf("[DEBUG] enrichStrandWithAI: Link processor not available (FIRECRAWL_API_KEY not set), skipping URL processing")
+	}
+
 	// Set AI status to processing before starting AI analysis
 	strand.AIStatus = "processing"
 	models.SaveStrand(ctx, strand)
@@ -347,9 +403,9 @@ func enrichStrandWithAI(ctx context.Context, strand *models.Strand) EnrichmentRe
 	aiCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	log.Printf("[DEBUG] enrichStrandWithAI: Starting AI analysis for strand %s (content length: %d)", strand.ID, len(strand.Content))
+	log.Printf("[DEBUG] enrichStrandWithAI: Starting AI analysis for strand %s (content length: %d, processed URLs: %v)", strand.ID, len(contentForAI), hasProcessedURLs)
 	resp, err := userAIClient.AnalyzeContent(aiCtx, &services.AnalysisRequest{
-		Content: strand.Content,
+		Content: contentForAI,
 		Source:  strand.Source,
 	})
 	if err != nil {
@@ -401,13 +457,27 @@ func enrichStrandWithAI(ctx context.Context, strand *models.Strand) EnrichmentRe
 		}
 	}
 
+	// Build sync notes
+	notes := "Automatic AI enrichment"
+	if len(strand.LinkMetadata) > 0 {
+		unsupportedCount := 0
+		for _, meta := range strand.LinkMetadata {
+			if meta.Status == "unsupported" {
+				unsupportedCount++
+			}
+		}
+		if unsupportedCount > 0 {
+			notes += fmt.Sprintf(" (%d URL(s) unsupported by Firecrawl)", unsupportedCount)
+		}
+	}
+
 	// Add sync log entry for frontend detection
 	syncLog := models.SyncLog{
 		Timestamp:      time.Now(),
 		Summary:        resp.Summary,
 		Tags:           resp.Tags,
 		SyncedByAI:     true,
-		Notes:          "Automatic AI enrichment",
+		Notes:          notes,
 		ModelOverride:  modelOverride,
 		ModelUsed:      modelUsed,
 		OverrideReason: overrideReason,
@@ -469,13 +539,27 @@ func enrichStrandWithUserAI(ctx context.Context, strand *models.Strand, ts *serv
 	strand.SyncedWithAI = true
 	strand.UpdatedAt = time.Now()
 
+	// Build sync notes
+	notes := "Automatic AI enrichment"
+	if len(strand.LinkMetadata) > 0 {
+		unsupportedCount := 0
+		for _, meta := range strand.LinkMetadata {
+			if meta.Status == "unsupported" {
+				unsupportedCount++
+			}
+		}
+		if unsupportedCount > 0 {
+			notes += fmt.Sprintf(" (%d URL(s) unsupported by Firecrawl)", unsupportedCount)
+		}
+	}
+
 	// Add sync log entry
 	syncLog := models.SyncLog{
 		Timestamp:  time.Now(),
 		Summary:    summary,
 		Tags:       strand.Tags,
 		SyncedByAI: true,
-		Notes:      "Automatic AI enrichment",
+		Notes:      notes,
 	}
 
 	// Initialize sync history if nil
