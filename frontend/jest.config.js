@@ -3,11 +3,16 @@ export default {
   preset: "ts-jest",
   testEnvironment: "jsdom",
   moduleNameMapper: {
-    "\\.(css|less|scss|sass)$": "<rootDir>/src/__mocks__/styleMock.js",
-    "^@milkdown/(.*)$": "<rootDir>/src/__mocks__/milkdownMock.tsx",
-    "^./MarkdownEditor$": "<rootDir>/src/__mocks__/MarkdownEditor.tsx",
+    "\\.(css|less|scss|sass)$": "<rootDir>/src/shared/__mocks__/styleMock.js",
+    "^@milkdown/(.*)$": "<rootDir>/src/shared/__mocks__/milkdownMock.tsx",
+    "^./MarkdownEditor$": "<rootDir>/src/shared/__mocks__/MarkdownEditor.tsx",
     // Mock import.meta.env for tests
-    "^import\\.meta\\.env$": "<rootDir>/src/__mocks__/envMock.js",
+    "^import\\.meta\\.env$": "<rootDir>/src/shared/__mocks__/envMock.js",
+    // Path aliases for new directory structure
+    "^@/features/(.*)$": "<rootDir>/src/features/$1",
+    "^@/shared/(.*)$": "<rootDir>/src/shared/$1",
+    "^@/app/(.*)$": "<rootDir>/src/app/$1",
+    "^@/(.*)$": "<rootDir>/src/$1",
   },
   transform: {
     "^.+\\.(ts|tsx)$": [
@@ -26,7 +31,7 @@ export default {
     ],
   },
   transformIgnorePatterns: ["/node_modules/(?!(@milkdown|lodash-es|react-markdown)/)"],
-  setupFilesAfterEnv: ["<rootDir>/src/setupTests.ts"],
+  setupFilesAfterEnv: ["<rootDir>/src/app/setupTests.ts"],
   testEnvironmentOptions: {
     customExportConditions: ["node", "node-addons"],
   },
@@ -41,4 +46,9 @@ export default {
     ],
   ],
   coveragePathIgnorePatterns: ["<rootDir>/src/client.ts"],
+  // Test discovery patterns for nested __tests__ folders
+  testMatch: [
+    "<rootDir>/src/**/__tests__/**/*.{js,jsx,ts,tsx}",
+    "<rootDir>/src/**/*.{spec,test}.{js,jsx,ts,tsx}"
+  ],
 };

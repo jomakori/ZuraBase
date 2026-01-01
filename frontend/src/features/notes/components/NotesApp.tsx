@@ -1,0 +1,261 @@
+import { useEffect, useState, useRef, useCallback } from "react";
+import { MilkdownProvider } from "@milkdown/react";
+import { FloppyDisk, Image } from "@phosphor-icons/react";
+import { getNote, saveNote } from "@/features/notes";
+import { Note } from "@/features/notes/types";
+import { v4 as uuidv4 } from "uuid";
+import CoverSelector from "@/shared/components/CoverSelector";
+import MarkdownEditor from "@/shared/components/MarkdownEditor";
+import SharingModal from "@/shared/components/SharingModal";
+import { useSaveHandler } from "@/shared/utils/saveUtils";
+import SaveButton from "@/shared/components/SaveButton";
+
+interface NotesAppProps {
+  onInit?: () => void;
+}
+
+function NotesApp({ onInit }: NotesAppProps) {
+  // Extract note ID strictly from /notes/:id path (no backward compatibility)
+  const initialId = (() => {
+    const pathMatch = window.location.pathname.match(/\/notes\/([^/]+)/);
+    return pathMatch ? pathMatch[1] : null;
+  })();
+
+  const [isLoading, setIsLoading] = useState(true);
+  const [coverImage, setCoverImage] = useState("");
+  const [content, setContent] = useState<string>(() => {
+    // Use default content if creating a new note, otherwise fetch will set content
+    if (!initialId) {
+      return `
+# Markdown Meeting Notes
+
+- *Date:* ${new Date().toLocaleDateString()}
+- *Note taker:* Simon Johansson
+- *Attendees:* Marcus, Johan, Erik
+
+---
+
+Write your notes in **markdown** to make pretty meeting notes.
+After saving the document you will get a link that you can share.
+
+`;
+    }
+    return ""; // Content will be fetched in useEffect
+  });
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [showCoverSelector, setShowCoverSelector] = useState(false);
+
+  // Track the save state for UI display
+  const [saveState, setSaveState] = useState<"unsaved" | "saving" | "saved">("saved");
+
+  // Use the modular save handler
+  const saveNoteWrapper = async (id: string | null, data: any) => {
+    const noteId = id || uuidv4();
+    console.log("[NOTES] Saving note", { id: noteId, data });
+
+    // Ensure markdown content is also sent as 'content' for backend title extraction
+    const payload = {
+      id: noteId,
+      text: data.text || "",
+      content: data.text || "",
+      cover_url: data.cover_url || "",
+    };
+
+    return saveNote(payload);
+  };
+
+  // Create a memoized content object that updates when content or coverImage changes
+  const noteContent = { text: content, cover_url: coverImage };
+
+  const {
+    queryParamID,
+    isSaving,
+    lastSaved,
+    showSharingModal,
+    setShowSharingModal,
+    saveDocument,
+  } = useSaveHandler(
+    initialId,
+    saveNoteWrapper,
+    noteContent,
+    hasUnsavedChanges
+  );
+
+  // Track content changes to set unsaved changes flag and trigger auto-save
+  const lastChangeTimeRef = useRef<number>(0);
+  const autoSaveTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const initializedRef = useRef(false);
+
+  // Function to schedule auto-save
+  const scheduleAutoSave = useCallback(() => {
+    // Clear any existing timer
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+      autoSaveTimerRef.current = null;
+    }
+
+    // Only schedule auto-save if we have an ID (not first save)
+    if (queryParamID && hasUnsavedChanges) {
+      // Set a timer for auto-save
+      autoSaveTimerRef.current = setTimeout(() => {
+        console.log("[NOTES] Auto-saving due to content change");
+        saveDocument();
+        autoSaveTimerRef.current = null;
+      }, 2000); // Auto-save after 2 seconds of no changes
+    }
+  }, [queryParamID, hasUnsavedChanges, saveDocument]);
+
+  // Track content changes
+  useEffect(() => {
+    if (!content) return;
+
+    // Set unsaved changes flag
+    setHasUnsavedChanges(true);
+    setSaveState("unsaved");
+
+    // Record the time of this change
+    lastChangeTimeRef.current = Date.now();
+
+    // Schedule auto-save
+    scheduleAutoSave();
+
+    // Clean up function
+    return () => {
+      if (autoSaveTimerRef.current) {
+        clearTimeout(autoSaveTimerRef.current);
+      }
+    };
+  }, [content, coverImage, scheduleAutoSave]);
+
+  useEffect(() => {
+    const fetchNote = async () => {
+      // If we do not have an id then we are creating a new note, nothing needs to be fetched
+      if (!queryParamID) {
+        setIsLoading(false);
+        if (onInit) onInit();
+        return;
+      }
+      try {
+        // Fetch the note from the backend
+        const response = await getNote(queryParamID);
+        setCoverImage(response.cover_url || "");
+        setContent(response.text || "");
+      } catch (err) {
+        console.error(err);
+      }
+      setIsLoading(false);
+      if (onInit) onInit();
+    };
+    fetchNote();
+  }, [queryParamID, onInit]);
+
+  // Handle save button click
+  const handleSave = async () => {
+    try {
+      setSaveState("saving");
+      await saveDocument();
+      setHasUnsavedChanges(false);
+      setSaveState("saved");
+      const currentPath = window.location.pathname;
+      const expectedPath = queryParamID ? `/notes/${queryParamID}` : "";
+      if (expectedPath && currentPath !== expectedPath) {
+        window.history.replaceState({}, "", expectedPath);
+      }
+    } catch (err) {
+      console.error(err);
+      setSaveState("unsaved");
+    }
+  };
+
+  // Initialize save state on mount based on initial values
+  useEffect(() => {
+    if (!initializedRef.current) {
+      if (isSaving) {
+        setSaveState("saving");
+      } else if (hasUnsavedChanges) {
+        setSaveState("unsaved");
+      } else if (lastSaved) {
+        setSaveState("saved");
+      }
+      initializedRef.current = true;
+    }
+  }, [isSaving, hasUnsavedChanges, lastSaved]);
+
+  // Update save state when relevant states change
+  useEffect(() => {
+    console.log("[NotesApp] Save State Effect:", {
+      isSaving,
+      hasUnsavedChanges,
+      lastSaved,
+      currentSaveState: saveState,
+    });
+    if (isSaving) {
+      setSaveState("saving");
+    } else if (hasUnsavedChanges) {
+      setSaveState("unsaved");
+    } else if (lastSaved) {
+      setSaveState("saved");
+
+      // Show a brief visual confirmation that save was successful
+      const saveConfirmation = document.querySelector(".save-button");
+      if (saveConfirmation) {
+        saveConfirmation.classList.add("save-success-flash");
+        setTimeout(() => {
+          saveConfirmation.classList.remove("save-success-flash");
+        }, 1000);
+      }
+    }
+  }, [isSaving, hasUnsavedChanges, lastSaved]);
+
+  return (
+    <div className="min-h-full">
+      <div
+        className={` pb-32 ${coverImage ? "" : "border-b-2 border-dashed"}`}
+        style={{
+          backgroundImage: `url(${coverImage})`,
+          backgroundSize: "cover",
+          backgroundPosition: "center",
+        }}
+      >
+        <header className="relative py-10">
+          <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8" />
+
+          <button
+            className="absolute bottom-0 right-5 flex items-center space-x-1 rounded border border-black border-opacity-50 bg-white px-2 py-0.5 opacity-70 transition-opacity duration-200 hover:opacity-100 xl:-bottom-28"
+            onClick={() => setShowCoverSelector(true)}
+          >
+            <Image size={20} />{" "}
+            <span>{coverImage ? "Change" : "Add"} cover</span>
+          </button>
+        </header>
+      </div>
+
+      <main className="-mt-20 h-full">
+        <div className="mx-auto h-full max-w-4xl rounded-none pb-12 xl:rounded-sm">
+          <div className="prose h-full w-full max-w-none rounded-none border border-black border-opacity-10 xl:rounded-sm">
+            <CoverSelector
+              open={showCoverSelector}
+              setOpen={setShowCoverSelector}
+              setCoverImage={setCoverImage}
+            />
+            {isLoading ? (
+              <span>Loading...</span>
+            ) : (
+              <MilkdownProvider>
+                <MarkdownEditor content={content} setContent={setContent} />
+              </MilkdownProvider>
+            )}
+          </div>
+        </div>
+      </main>
+
+      <div className="fixed bottom-5 right-5 flex items-center space-x-4">
+        <SaveButton saveState={saveState} onClick={handleSave} />
+      </div>
+
+      <SharingModal open={showSharingModal} setOpen={setShowSharingModal} />
+    </div>
+  );
+}
+
+export default NotesApp;
