@@ -1,0 +1,127 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* purgecss start ignore */
+:root {
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  -webkit-text-size-adjust: 100%;
+}
+
+html,
+body {
+  @apply h-full;
+}
+
+html {
+  @apply antialiased;
+  font-size: 16px; /* Force the definition of 16px as 1rem */
+}
+
+body {
+  @apply antialiased;
+}
+
+#root {
+  @apply w-full h-full;
+}
+
+.milkdown {
+  @apply rounded bg-[#fcfcfc];
+}
+
+.editor {
+  @apply px-10 py-8 mx-auto min-h-screen;
+}
+
+.ProseMirror:focus {
+  outline: none;
+}
+
+.prose li {
+  @apply mt-0 mb-0;
+}
+
+.prose li p {
+  @apply mt-2 mb-2;
+}
+
+/* Save button animation */
+@keyframes saveSuccessFlash {
+  0% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.05);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+.save-success-flash {
+  animation: saveSuccessFlash 0.5s ease-in-out;
+}
+
+/* Animation for loading spinner */
+@keyframes spin-slow {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-spin-slow {
+  animation: spin-slow 2s linear infinite;
+}
+
+/* Animations for Dialog and Toast components */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes scaleIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes slideInRight {
+  from {
+    opacity: 0;
+    transform: translateX(100%);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.animate-fadeIn {
+  animation: fadeIn 0.2s ease-out;
+}
+
+.animate-scaleIn {
+  animation: scaleIn 0.2s ease-out;
+}
+
+.animate-slideInRight {
+  animation: slideInRight 0.3s ease-out;
+}
+
+/* purgecss end ignore */

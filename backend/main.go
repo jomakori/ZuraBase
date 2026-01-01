@@ -2,20 +2,21 @@ package main
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
-	"log"
 	"net/http"
 	"os"
-	"strings"
 
+	"github.com/gin-gonic/gin"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 
-	"zurabase/auth"
-	"zurabase/notes"
-	"zurabase/pexels"
-	"zurabase/planner"
+	"zurabase/api/notes"
+	"zurabase/api/planner"
+	"zurabase/api/strands"
+	"zurabase/internal/auth"
+	"zurabase/internal/logs"
+	"zurabase/internal/models"
+	"zurabase/internal/server"
+	"zurabase/internal/services"
 )
 
 var mongoClient *mongo.Client
@@ -34,231 +35,121 @@ func HealthCheck(ctx context.Context) (*HealthCheckResponse, error) {
 	return &HealthCheckResponse{Status: "healthy"}, nil
 }
 
-// CORS middleware adds the necessary CORS headers to allow cross-origin requests
-func CORS(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Get allowed origin from UI_ENDPOINT environment variable
-		allowedOrigin := os.Getenv("UI_ENDPOINT")
-		// If empty, log an error but continue with empty value (which will block all CORS)
-		if allowedOrigin == "" {
-			log.Printf("[CORS] ERROR: UI_ENDPOINT environment variable is not set. CORS will not work properly.")
-		}
-		
-		// Log CORS settings without exposing full details
-		fmt.Printf("[CORS] CORS configured for API\n")
-		
-		// Set CORS headers
-		w.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-		w.Header().Set("Access-Control-Allow-Credentials", "true")
+// healthCheckHandler handles health check requests
+func healthCheckHandler(c *gin.Context) {
+	ctx := c.Request.Context()
+	response, err := HealthCheck(ctx)
 
-		// Handle preflight requests
-		if r.Method == "OPTIONS" {
-			w.WriteHeader(http.StatusOK)
-			return
-		}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, response)
+		return
+	}
 
-		// Call the next handler
-		next.ServeHTTP(w, r)
-	})
+	c.JSON(http.StatusOK, response)
 }
 
+// setupRouter creates and configures the Gin router with all middleware and routes
+// The setupRouter function will be moved to backend/server/router.go and exposed as SetupRouter.
+
+// The registerGinRoutes function will be moved to backend/server/router.go.
+
 func main() {
+	// Initialize structured logger
+	logger := services.NewLogger("main")
+	defer logger.Sync()
+
 	// Validate required environment variables
 	requiredEnvVars := []string{"MONGO_URI", "UI_ENDPOINT"}
 	for _, envVar := range requiredEnvVars {
 		if os.Getenv(envVar) == "" {
-			log.Fatalf("Required environment variable %s is not set", envVar)
+			logger.Error("Required environment variable is not set",
+				services.String("variable", envVar))
+			logger.Fatal("Application startup failed due to missing environment variable",
+				services.String("variable", envVar))
 		}
 	}
+
+	logger.Info("Starting ZuraBase backend server initialization")
 
 	// Connect to MongoDB
 	var err error
 	mongoClient, err = mongo.Connect(context.Background(), options.Client().ApplyURI(os.Getenv("MONGO_URI")))
 	if err != nil {
-		log.Fatalf("Failed to connect to MongoDB: %v", err)
+		logger.Error("Failed to connect to MongoDB", services.Error(err))
+		logger.Fatal("Application startup failed due to MongoDB connection error", services.Error(err))
 	}
 	defer mongoClient.Disconnect(context.Background())
 
+	logger.Info("Successfully connected to MongoDB")
+
 	// Initialize packages
+	// Initialize MongoDB collections safely
+	if mongoClient == nil {
+		logger.Fatal("MongoDB client is nil — initialization aborted")
+	}
+
 	notes.Initialize(mongoClient, "zurabase")
 	planner.Initialize(mongoClient, "zurabase")
 	auth.Initialize(mongoClient, "zurabase")
+	models.Initialize(mongoClient, "zurabase")
+
+	// Initialize LLM profiles
+	if err := models.InitializeLLMProfiles(mongoClient, "zurabase"); err != nil {
+		logger.Warn("LLM profiles initialization error", services.Error(err))
+	} else {
+		logger.Info("LLM profiles initialized successfully")
+	}
+
+	logger.Info("MongoDB models initialized successfully")
+
+	// Initialize logs module
+	if err := logs.Initialize(); err != nil {
+		logger.Warn("Logs initialization error", services.Error(err))
+	} else {
+		logger.Info("Logs module initialized successfully")
+	}
+
+	// Initialize strands module (AI + Tag Service)
+	if err := strands.Initialize(); err != nil {
+		logger.Warn("Strands initialization error", services.Error(err))
+	} else {
+		logger.Info("Strands module initialized successfully")
+	}
+
+	// Initialize persistent WhatsApp connection
+	ctx := context.Background()
+	if err := strands.InitializeWhatsApp(ctx); err != nil {
+		logger.Warn("WhatsApp initialization failed", services.Error(err))
+	} else {
+		logger.Info("WhatsApp integration initialized successfully")
+	}
 
 	if err := planner.InitializeTemplates(context.Background()); err != nil {
-		log.Fatalf("Failed to initialize planner templates: %v", err)
-	}
-	mux := http.NewServeMux()
-	
-	// Register health check route
-	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		ctx := context.Background()
-		response, err := HealthCheck(ctx)
-		w.Header().Set("Content-Type", "application/json")
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			if err := json.NewEncoder(w).Encode(response); err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-			}
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-		if err := json.NewEncoder(w).Encode(response); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-		}
-	})
-	
-	// generic helper to mount all routes (DRY)
-	type route struct {
-		path    string
-		handler http.HandlerFunc
-	}
-	mountRoutes := func(mux *http.ServeMux, routes []route) {
-		for _, r := range routes {
-			mux.HandleFunc(r.path, r.handler)
-			mux.HandleFunc("/api"+r.path, r.handler)
-		}
+		logger.Error("Failed to initialize planner templates", services.Error(err))
+		logger.Fatal("Application startup failed due to planner templates initialization error", services.Error(err))
 	}
 
-	// --- Grouped routes ---
-	// Register notes routes, all protected by AuthMiddleware
-	mux.Handle("/api/note", auth.AuthMiddleware(http.HandlerFunc(notes.HandleNoteRequest)))
-	mux.Handle("/note", auth.AuthMiddleware(http.HandlerFunc(notes.HandleNoteRequest)))
-
-	mux.Handle("/api/note/", auth.AuthMiddleware(http.HandlerFunc(notes.HandleNoteRequest)))
-	mux.Handle("/note/", auth.AuthMiddleware(http.HandlerFunc(notes.HandleNoteRequest)))
-
-	mux.Handle("/api/notes", auth.AuthMiddleware(http.HandlerFunc(notes.HandleListNotes)))
-	mux.Handle("/notes", auth.AuthMiddleware(http.HandlerFunc(notes.HandleListNotes)))
-
-	plannerRoutes := []route{
-		{"/planner/list", planner.HandleListPlanners},
-		{"/planner", func(w http.ResponseWriter, r *http.Request) {
-			if r.Method == http.MethodPost {
-				planner.HandleCreatePlanner(w, r)
-			} else {
-				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-			}
-		}},
-		{"/planner/", func(w http.ResponseWriter, r *http.Request) {
-			path := strings.TrimPrefix(r.URL.Path, "/api")
-			switch {
-			case path == "/planner/templates":
-				planner.HandleGetTemplates(w, r)
-			case strings.HasPrefix(path, "/planner/templates/"):
-				planner.HandleGetTemplate(w, r)
-			case path == "/planner/import":
-				planner.HandleImportPlannerMarkdown(w, r)
-			case strings.HasSuffix(path, "/export"):
-				planner.HandleExportPlannerMarkdown(w, r)
-			case strings.HasSuffix(path, "/lanes/reorder"):
-				planner.HandleReorderLanes(w, r)
-			case strings.Contains(path, "/lane/") && strings.HasSuffix(path, "/cards/reorder"):
-				planner.HandleReorderCards(w, r)
-			case strings.Contains(path, "/lane/") && strings.HasSuffix(path, "/split"):
-				planner.HandleSplitLane(w, r)
-			case strings.Contains(path, "/lane/") && strings.HasSuffix(path, "/card"):
-				planner.HandleAddCard(w, r)
-			case strings.Contains(path, "/lane/") && strings.Contains(path, "/card/"):
-				parts := strings.Split(path, "/")
-				if len(parts) == 7 {
-					switch r.Method {
-					case http.MethodGet:
-						planner.HandleGetCard(w, r)
-					case http.MethodPut:
-						planner.HandleUpdateCard(w, r)
-					case http.MethodDelete:
-						planner.HandleDeleteCard(w, r)
-					default:
-						http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-					}
-					return
-				}
-			case strings.Contains(path, "/card/") && strings.HasSuffix(path, "/move"):
-				planner.HandleMoveCard(w, r)
-			case strings.HasSuffix(path, "/lane"):
-				planner.HandleAddLane(w, r)
-			case strings.Contains(path, "/lane/"):
-				parts := strings.Split(path, "/")
-				if len(parts) == 5 {
-					switch r.Method {
-					case http.MethodPut:
-						planner.HandleUpdateLane(w, r)
-					case http.MethodDelete:
-						planner.HandleDeleteLane(w, r)
-					default:
-						http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-					}
-					return
-				}
-			default:
-				parts := strings.Split(path, "/")
-				if len(parts) == 3 {
-					switch r.Method {
-					case http.MethodGet:
-						planner.HandleGetPlanner(w, r)
-					case http.MethodPut:
-						planner.HandleUpdatePlanner(w, r)
-					case http.MethodDelete:
-						planner.HandleDeletePlanner(w, r)
-					default:
-						http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-					}
-					return
-				}
-				http.NotFound(w, r)
-			}
-		}},
+	// Setup Gin router
+	// Ensure all MongoDB collections are initialized before starting the router
+	logger.Info("Verifying MongoDB collection initialization")
+	if mongoClient == nil {
+		logger.Fatal("MongoDB client is nil before router setup")
 	}
 
-	imageRoutes := []route{
-		{"/images/", func(w http.ResponseWriter, r *http.Request) {
-			if r.Method != http.MethodGet {
-				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-				return
-			}
-			query := r.URL.Path[len("/images/"):]
-			if query == "" {
-				http.Error(w, "Query parameter is required", http.StatusBadRequest)
-				return
-			}
-			photos, err := pexels.SearchPhoto(r.Context(), query)
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(photos)
-		}},
+	router := server.SetupRouter(logger)
+
+	// Start server
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
 	}
 
-	authRoutes := []route{
-		{"/auth/google", auth.HandleGoogleLogin},
-		{"/auth/google/callback", auth.HandleGoogleCallback},
-		{"/auth/user", func(w http.ResponseWriter, r *http.Request) {
-			auth.AuthMiddleware(http.HandlerFunc(auth.HandleGetCurrentUser)).ServeHTTP(w, r)
-		}},
-		{"/auth/logout", auth.HandleLogout},
-	}
+	logger.Info("Starting server",
+		services.String("port", port),
+		services.String("environment", os.Getenv("ENVIRONMENT")))
 
-	// --- Register all grouped routes ---
-	// mountRoutes(mux, notesRoutes) // Removed, now explicitly registered above
-	mountRoutes(mux, plannerRoutes)
-	mountRoutes(mux, imageRoutes)
-	mountRoutes(mux, authRoutes)
-
-	
-	// Register authentication routes
-
-	// Wrap existing mux with optional authentication middleware
-	protectedMux := auth.OptionalAuthMiddleware(mux)
-
-	// Create handler chain with CORS middleware
-	handler := CORS(protectedMux)
-	
-	log.Println("Starting server on :8080")
-	if err := http.ListenAndServe(":8080", handler); err != nil {
-		log.Fatalf("Server failed: %s", err)
+	if err := router.Run(":" + port); err != nil {
+		logger.Error("Server failed to start", services.Error(err))
+		logger.Fatal("Server failed to start", services.Error(err))
 	}
 }

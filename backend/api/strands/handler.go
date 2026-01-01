@@ -1,0 +1,1517 @@
+package strands
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"log"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+
+	"zurabase/internal/models"
+	"zurabase/internal/services"
+
+	"github.com/google/uuid"
+)
+
+// Initialize sets up the services needed for the strands package
+func Initialize() error {
+	log.Printf("✅ Strands package initialized. AI client will be created per user.")
+	// AI service is available, sync any unsynced strands
+	go autoSyncUnsyncedStrands()
+	return nil
+}
+
+// getFirecrawlService creates a FirecrawlService instance using environment variables.
+// Returns nil if FIRECRAWL_API_KEY is not set.
+func getFirecrawlService() *services.FirecrawlService {
+	apiKey := os.Getenv("FIRECRAWL_API_KEY")
+	if apiKey == "" {
+		log.Printf("[WARN] FIRECRAWL_API_KEY not set, link processing disabled")
+		return nil
+	}
+	baseURL := os.Getenv("FIRECRAWL_BASE_URL")
+	service := services.NewFirecrawlService(apiKey, baseURL)
+	log.Printf("[DEBUG] FirecrawlService initialized")
+	return service
+}
+
+// getLinkProcessor creates a LinkProcessor instance using a FirecrawlService.
+// Returns nil if FirecrawlService cannot be created.
+func getLinkProcessor() *services.LinkProcessor {
+	firecrawlService := getFirecrawlService()
+	if firecrawlService == nil {
+		return nil
+	}
+	return services.NewLinkProcessor(firecrawlService)
+}
+
+// getAIClientForUser creates an LLMClient for a specific user using their default LLM profile.
+// It strictly attempts to create a LangChainClient. If the profile is invalid or
+// LangChainClient creation fails, it returns an error.
+func getAIClientForUser(ctx context.Context, userID string) (services.LLMClient, error) {
+	log.Printf("[DEBUG] getAIClientForUser: Starting LLM client resolution for user %s", userID)
+
+	// Get user's default LLM profile
+	profile, err := models.GetDefaultLLMProfile(ctx, userID)
+	if err != nil {
+		log.Printf("[ERROR] getAIClientForUser: Failed to get LLM profile for user %s: %v", userID, err)
+		return nil, fmt.Errorf("failed to get LLM profile: %w", err)
+	}
+
+	if profile == nil {
+		log.Printf("[ERROR] getAIClientForUser: No default LLM profile found for user %s", userID)
+		return nil, fmt.Errorf("no default LLM profile found for user %s", userID)
+	}
+
+	log.Printf("[DEBUG] getAIClientForUser: Retrieved profile '%s' (ID: %s) for user %s", profile.Name, profile.ID, userID)
+	log.Printf("[DEBUG] getAIClientForUser: Profile details - ServerURL: '%s', Model: '%s', APIKey present: %v, IsDefault: %v",
+		profile.ServerURL, profile.Model, profile.APIKey != "", profile.IsDefault)
+
+	if profile.ServerURL == "" || profile.APIKey == "" {
+		log.Printf("[ERROR] getAIClientForUser: Invalid LLM profile configuration for user %s - ServerURL: '%s', APIKey present: %v",
+			userID, profile.ServerURL, profile.APIKey != "")
+		return nil, fmt.Errorf("invalid LLM profile configuration for user %s", userID)
+	}
+
+	if profile.Model == "" {
+		log.Printf("[ERROR] getAIClientForUser: No model specified in LLM profile for user %s", userID)
+		return nil, fmt.Errorf("no model specified in LLM profile for user %s", userID)
+	}
+
+	// Attempt to create a LangChain client
+	log.Printf("[DEBUG] getAIClientForUser: Creating LangChain client with ServerURL='%s', Model='%s'", profile.ServerURL, profile.Model)
+	langChainClient, err := services.NewLangChainClient(profile)
+	if err != nil {
+		log.Printf("[ERROR] getAIClientForUser: Failed to create LangChain client for user %s: %v", userID, err)
+		log.Printf("[ERROR] getAIClientForUser: Profile details that failed - ServerURL: '%s', Model: '%s'", profile.ServerURL, profile.Model)
+		return nil, fmt.Errorf("failed to create LangChain client: %w", err)
+	}
+
+	log.Printf("[DEBUG] getAIClientForUser: Successfully created LangChain client for user %s", userID)
+	return langChainClient, nil
+}
+
+// autoSyncUnsyncedStrands automatically syncs strands that haven't been synced with AI
+func autoSyncUnsyncedStrands() {
+	log.Println("Starting simplified AI auto-sync for unsynced strands...")
+
+	ctx := context.Background()
+	strands, err := models.GetUnsyncedStrands(ctx)
+	if err != nil {
+		log.Printf("⚠️ Could not fetch unsynced strands: %v", err)
+		return
+	}
+
+	if len(strands) == 0 {
+		log.Println("✅ No unsynced strands to process")
+		return
+	}
+
+	log.Printf("Starting simplified AI auto-sync for %d strands...", len(strands))
+	for i := range strands {
+		str := &strands[i]
+		if !str.SyncedWithAI {
+			log.Printf("→ Syncing strand %s", str.ID)
+			result := enrichStrandWithAI(ctx, str)
+			if result.Success {
+				log.Printf("✓ Synced strand %s successfully", str.ID)
+			} else {
+				log.Printf("✗ Failed syncing strand %s: %s", str.ID, result.Error)
+			}
+			time.Sleep(500 * time.Millisecond) // prevent service overwhelm
+		}
+	}
+	log.Println("🏁 Simplified AI auto-sync complete")
+}
+
+// StrandRequest represents a request to create or update a strand
+type StrandRequest struct {
+	Content     string   `json:"content"`
+	Source      string   `json:"source"`
+	Tags        []string `json:"tags,omitempty"`
+	Attachments []string `json:"attachments,omitempty"` // List of attachment IDs to associate
+}
+
+// StrandResponse represents the response for a strand operation
+type StrandResponse struct {
+	Strand  *models.Strand  `json:"strand,omitempty"`
+	Strands []models.Strand `json:"strands,omitempty"`
+	Tags    []string        `json:"tags,omitempty"`
+	Error   string          `json:"error,omitempty"`
+	Count   int             `json:"count,omitempty"`
+	Page    int             `json:"page,omitempty"`
+	Limit   int             `json:"limit,omitempty"`
+}
+
+// EnrichmentResult represents the result of an AI enrichment operation
+type EnrichmentResult struct {
+	StrandID string `json:"strand_id"`
+	Success  bool   `json:"success"`
+	Error    string `json:"error,omitempty"`
+}
+
+// SyncResponse represents the response for a sync operation
+type SyncResponse struct {
+	Status  string `json:"status"`
+	Message string `json:"message"`
+}
+
+// HandleCreateStrand handles POST /strands
+// This is a simplified version that separates strand saving from AI enrichment
+func HandleCreateStrand(w http.ResponseWriter, r *http.Request) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("HandleCreateStrand: recovered from panic: %v", r)
+			http.Error(w, `{"error": "internal server error due to panic"}`, http.StatusInternalServerError)
+		}
+	}()
+
+	if r.Method != http.MethodPost {
+		http.Error(w, `{"error": "method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+
+	// Get user ID from context (set by auth middleware)
+	userID, _ := r.Context().Value("user_id").(string)
+	if userID == "" {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	// Parse request body
+	var req StrandRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		log.Printf("HandleCreateStrand: error decoding request body: %v", err)
+		http.Error(w, `{"error": "invalid request body"}`, http.StatusBadRequest)
+		return
+	}
+
+	// Validate request
+	if req.Content == "" {
+		http.Error(w, `{"error": "content is required"}`, http.StatusBadRequest)
+		return
+	}
+
+	if req.Source == "" {
+		req.Source = "manual" // Default source
+	}
+
+	// Create a new strand with basic information
+	strand := &models.Strand{
+		ID:           uuid.New().String(),
+		UserID:       userID,
+		Content:      req.Content,
+		Source:       req.Source,
+		Tags:         req.Tags,
+		CreatedAt:    time.Now(),
+		UpdatedAt:    time.Now(),
+		SyncedWithAI: false, // Always start as not synced
+	}
+
+	// Generate a basic summary regardless of AI availability
+	strand.Summary = generateBasicSummary(req.Content)
+
+	// If user didn't provide tags, add source as a tag
+	if len(req.Tags) == 0 {
+		// Only add source as a tag if it's not already "manual"
+		if req.Source != "manual" {
+			strand.Tags = []string{strings.ToLower(req.Source)}
+		} else {
+			strand.Tags = []string{}
+		}
+	} else {
+		// Normalize user-provided tags (lowercase)
+		for i, tag := range strand.Tags {
+			strand.Tags[i] = strings.ToLower(strings.TrimSpace(tag))
+		}
+
+		// Remove duplicates
+		strand.Tags = removeDuplicateTags(strand.Tags)
+	}
+
+	// Save the strand
+	savedStrand, err := models.SaveStrand(r.Context(), strand)
+	if err != nil {
+		log.Printf("HandleCreateStrand: error saving strand: %v", err)
+		response := StrandResponse{
+			Error: "Failed to save strand: " + err.Error(),
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// Try to enrich with AI in the background
+	// This doesn't block the response to the user
+	// Create a new background context that won't be canceled when the request ends
+	bgCtx := context.Background()
+
+	// Use a separate goroutine with panic recovery to prevent crashes
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("RECOVERED from panic in enrichStrandWithAI: %v", r)
+			}
+		}()
+		result := enrichStrandWithAI(bgCtx, savedStrand)
+		if !result.Success {
+			log.Printf("Background enrichment failed for strand %s: %s", result.StrandID, result.Error)
+		}
+	}()
+
+	// Return the saved strand immediately
+	response := StrandResponse{
+		Strand: savedStrand,
+	}
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		log.Printf("HandleCreateStrand: error encoding response: %v", err)
+		http.Error(w, `{"error": "failed to encode response"}`, http.StatusInternalServerError)
+	}
+}
+
+// hasMediaContent checks if a strand contains media attachments
+func hasMediaContent(strand *models.Strand) bool {
+	if len(strand.Attachments) == 0 {
+		return false
+	}
+
+	// Define media MIME types
+	mediaTypes := []string{
+		"image/",
+		"video/",
+		"audio/",
+	}
+
+	for _, attachment := range strand.Attachments {
+		for _, mediaType := range mediaTypes {
+			if strings.HasPrefix(attachment.MimeType, mediaType) {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// getAIClientForStrand creates an LLM client for a strand, using media-optimized profile if needed
+func getAIClientForStrand(ctx context.Context, strand *models.Strand) (services.LLMClient, error) {
+	// Check if strand has media content
+	if hasMediaContent(strand) {
+		log.Printf("[DEBUG] getAIClientForStrand: Strand %s has media content, using media-optimized LLM profile", strand.ID)
+		
+		// Get media-optimized LLM profile
+		mediaProfile, err := models.GetMediaOptimizedLLMProfile(ctx, strand.UserID)
+		if err != nil {
+			log.Printf("[WARN] getAIClientForStrand: Failed to get media-optimized LLM profile for strand %s: %v", strand.ID, err)
+			log.Printf("[DEBUG] getAIClientForStrand: Falling back to default LLM profile for strand %s", strand.ID)
+			// Fall back to default profile
+			return getAIClientForUser(ctx, strand.UserID)
+		}
+
+		// Create LangChain client with media-optimized profile
+		langChainClient, err := services.NewLangChainClient(mediaProfile)
+		if err != nil {
+			log.Printf("[ERROR] getAIClientForStrand: Failed to create LangChain client with media-optimized profile for strand %s: %v", strand.ID, err)
+			log.Printf("[DEBUG] getAIClientForStrand: Falling back to default LLM profile for strand %s", strand.ID)
+			// Fall back to default profile
+			return getAIClientForUser(ctx, strand.UserID)
+		}
+
+		log.Printf("[DEBUG] getAIClientForStrand: Successfully created media-optimized LLM client for strand %s with model: %s", strand.ID, mediaProfile.Model)
+		return langChainClient, nil
+	}
+
+	// No media content, use default profile
+	log.Printf("[DEBUG] getAIClientForStrand: Strand %s has no media content, using default LLM profile", strand.ID)
+	return getAIClientForUser(ctx, strand.UserID)
+}
+
+// enrichStrandWithAI processes a strand with AI in the background
+// This is called asynchronously to avoid blocking the user response
+func enrichStrandWithAI(ctx context.Context, strand *models.Strand) EnrichmentResult {
+	log.Printf("[DEBUG] enrichStrandWithAI: Starting AI enrichment for strand %s (user: %s)", strand.ID, strand.UserID)
+
+	userAIClient, err := getAIClientForStrand(ctx, strand)
+	if err != nil {
+		log.Printf("[ERROR] enrichStrandWithAI: AI client unavailable for strand %s: %v", strand.ID, err)
+		strand.SyncedWithAI = false
+		strand.AIStatus = "failed"
+		strand.AIFailureReason = err.Error()
+		models.SaveStrand(ctx, strand)
+		return EnrichmentResult{StrandID: strand.ID, Success: false, Error: err.Error()}
+	}
+
+	log.Printf("[DEBUG] enrichStrandWithAI: AI client successfully obtained for strand %s", strand.ID)
+
+	userTagService := services.NewTagService(userAIClient)
+	if userTagService == nil {
+		log.Printf("[ERROR] enrichStrandWithAI: Failed to create tag service for strand %s", strand.ID)
+		strand.SyncedWithAI = false
+		strand.AIStatus = "failed"
+		strand.AIFailureReason = "Failed to create tag service"
+		models.SaveStrand(ctx, strand)
+		return EnrichmentResult{StrandID: strand.ID, Success: false, Error: "Failed to create tag service"}
+	}
+
+	log.Printf("[DEBUG] enrichStrandWithAI: Tag service created successfully for strand %s", strand.ID)
+
+	// --- Link Processing ---
+	contentForAI := strand.Content
+	hasProcessedURLs := false
+
+	linkProcessor := getLinkProcessor()
+	if linkProcessor != nil {
+		log.Printf("[DEBUG] enrichStrandWithAI: Link processor available, detecting URLs in strand %s", strand.ID)
+		urls := linkProcessor.DetectURLs(strand.Content)
+		if len(urls) > 0 {
+			log.Printf("[INFO] enrichStrandWithAI: Detected %d URLs in strand %s: %v", len(urls), strand.ID, urls)
+			// Extract and combine content from URLs
+			combined, metadata, err := linkProcessor.ExtractAndCombine(ctx, strand.Content, urls)
+			if err != nil {
+				log.Printf("[WARN] enrichStrandWithAI: URL extraction failed for strand %s: %v", strand.ID, err)
+				// Continue with original content
+			} else {
+				// Store link metadata in strand
+				strand.LinkMetadata = metadata
+				strand.HasProcessedURLs = true
+				hasProcessedURLs = true
+				log.Printf("[INFO] enrichStrandWithAI: Successfully extracted content from %d URLs for strand %s", len(metadata), strand.ID)
+				// Remove URLs from combined content before sending to LLM
+				contentForAI = linkProcessor.RemoveURLs(combined)
+				log.Printf("[DEBUG] enrichStrandWithAI: Cleaned content length: %d (original: %d)", len(contentForAI), len(strand.Content))
+			}
+		} else {
+			log.Printf("[DEBUG] enrichStrandWithAI: No URLs detected in strand %s", strand.ID)
+		}
+	} else {
+		log.Printf("[DEBUG] enrichStrandWithAI: Link processor not available (FIRECRAWL_API_KEY not set), skipping URL processing")
+	}
+
+	// Set AI status to processing before starting AI analysis
+	strand.AIStatus = "processing"
+	models.SaveStrand(ctx, strand)
+
+	// Analyze content with timeout to prevent hanging
+	aiCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	log.Printf("[DEBUG] enrichStrandWithAI: Starting AI analysis for strand %s (content length: %d, processed URLs: %v)", strand.ID, len(contentForAI), hasProcessedURLs)
+	resp, err := userAIClient.AnalyzeContent(aiCtx, &services.AnalysisRequest{
+		Content: contentForAI,
+		Source:  strand.Source,
+	})
+	if err != nil {
+		log.Printf("[ERROR] enrichStrandWithAI: AI analysis failed for strand %s: %v", strand.ID, err)
+		strand.SyncedWithAI = false
+		strand.AIStatus = "failed"
+		strand.AIFailureReason = err.Error()
+		models.SaveStrand(ctx, strand)
+		return EnrichmentResult{StrandID: strand.ID, Success: false, Error: err.Error()}
+	}
+
+	if resp == nil {
+		log.Printf("[ERROR] enrichStrandWithAI: AI returned nil response for strand %s", strand.ID)
+		strand.SyncedWithAI = false
+		strand.AIStatus = "failed"
+		strand.AIFailureReason = "AI response nil"
+		models.SaveStrand(ctx, strand)
+		return EnrichmentResult{StrandID: strand.ID, Success: false, Error: "AI response nil"}
+	}
+
+	// Debug logging for AI response
+	log.Printf("[DEBUG] enrichStrandWithAI: AI analysis successful for strand %s: %d tags, summary: %s",
+		strand.ID, len(resp.Tags), resp.Summary)
+
+	// Apply enrichment directly
+	strand.Tags = resp.Tags
+	strand.Summary = resp.Summary
+	strand.SyncedWithAI = true
+	strand.AIStatus = "completed"
+	strand.UpdatedAt = time.Now()
+
+	// Check if we used a media-optimized model override
+	modelOverride := false
+	modelUsed := ""
+	overrideReason := ""
+	
+	// Check if strand has media content and we used a media-optimized model
+	if hasMediaContent(strand) {
+		// Get the media-optimized profile to check if we used it
+		mediaProfile, err := models.GetMediaOptimizedLLMProfile(ctx, strand.UserID)
+		if err == nil && mediaProfile != nil {
+			// Check if we're actually using the media-optimized profile
+			defaultProfile, _ := models.GetDefaultLLMProfile(ctx, strand.UserID)
+			if defaultProfile != nil && mediaProfile.ID != defaultProfile.ID {
+				modelOverride = true
+				modelUsed = mediaProfile.Model
+				overrideReason = "Media content detected - using media-optimized model"
+			}
+		}
+	}
+
+	// Build sync notes
+	notes := "Automatic AI enrichment"
+	if len(strand.LinkMetadata) > 0 {
+		unsupportedCount := 0
+		for _, meta := range strand.LinkMetadata {
+			if meta.Status == "unsupported" {
+				unsupportedCount++
+			}
+		}
+		if unsupportedCount > 0 {
+			notes += fmt.Sprintf(" (%d URL(s) unsupported by Firecrawl)", unsupportedCount)
+		}
+	}
+
+	// Add sync log entry for frontend detection
+	syncLog := models.SyncLog{
+		Timestamp:      time.Now(),
+		Summary:        resp.Summary,
+		Tags:           resp.Tags,
+		SyncedByAI:     true,
+		Notes:          notes,
+		ModelOverride:  modelOverride,
+		ModelUsed:      modelUsed,
+		OverrideReason: overrideReason,
+	}
+
+	// Initialize sync history if nil
+	if strand.SyncHistory == nil {
+		strand.SyncHistory = []models.SyncLog{}
+	}
+	strand.SyncHistory = append(strand.SyncHistory, syncLog)
+
+	models.SaveStrand(ctx, strand)
+	log.Printf("[DEBUG] enrichStrandWithAI: Strand %s successfully synced with AI at %s", strand.ID, strand.UpdatedAt.Format(time.RFC3339))
+
+	return EnrichmentResult{StrandID: strand.ID, Success: true}
+}
+
+// enrichStrandWithUserAI is a helper function that uses a specific tag service to enrich a strand
+func enrichStrandWithUserAI(ctx context.Context, strand *models.Strand, ts *services.TagService) EnrichmentResult {
+	log.Printf("Tag extraction started for strand %s...", strand.ID)
+
+	// Extract tags and summary
+	tags, summary, err := ts.ExtractTagsFromContent(ctx, strand.Content, strand.Source)
+	if err != nil {
+		log.Printf("Error enriching strand %s with AI: %v", strand.ID, err)
+		return EnrichmentResult{
+			StrandID: strand.ID,
+			Success:  false,
+			Error:    fmt.Sprintf("AI enrichment failed: %v", err),
+		}
+	}
+
+	log.Printf("AI enrichment completed for strand %s", strand.ID)
+
+	// Ensure all tags are lowercase
+	for i, tag := range tags {
+		tags[i] = strings.ToLower(strings.TrimSpace(tag))
+	}
+
+	// Remove any "manual" tag from AI-generated tags to avoid duplication
+	filteredTags := []string{}
+	for _, tag := range tags {
+		if tag != "manual" {
+			filteredTags = append(filteredTags, tag)
+		}
+	}
+
+	// Merge with any user-provided tags
+	if len(strand.Tags) > 0 {
+		strand.Tags = ts.MergeTags(strand.Tags, filteredTags)
+	} else {
+		strand.Tags = filteredTags
+	}
+
+	// Final deduplication and cleanup
+	strand.Tags = removeDuplicateTags(strand.Tags)
+
+	strand.Summary = summary
+	strand.SyncedWithAI = true
+	strand.UpdatedAt = time.Now()
+
+	// Build sync notes
+	notes := "Automatic AI enrichment"
+	if len(strand.LinkMetadata) > 0 {
+		unsupportedCount := 0
+		for _, meta := range strand.LinkMetadata {
+			if meta.Status == "unsupported" {
+				unsupportedCount++
+			}
+		}
+		if unsupportedCount > 0 {
+			notes += fmt.Sprintf(" (%d URL(s) unsupported by Firecrawl)", unsupportedCount)
+		}
+	}
+
+	// Add sync log entry
+	syncLog := models.SyncLog{
+		Timestamp:  time.Now(),
+		Summary:    summary,
+		Tags:       strand.Tags,
+		SyncedByAI: true,
+		Notes:      notes,
+	}
+
+	// Initialize sync history if nil
+	if strand.SyncHistory == nil {
+		strand.SyncHistory = []models.SyncLog{}
+	}
+	strand.SyncHistory = append(strand.SyncHistory, syncLog)
+
+	// Find related strands
+	related, err := ts.FindRelatedStrands(ctx, strand, 5)
+	if err != nil {
+		log.Printf("Error finding related strands: %v", err)
+	} else if len(related) > 0 {
+		// Update related IDs
+		var relatedIDs []string
+		for _, s := range related {
+			relatedIDs = append(relatedIDs, s.ID)
+		}
+		strand.RelatedIDs = relatedIDs
+	}
+
+	// Save the enriched strand
+	_, err = models.SaveStrand(ctx, strand)
+	if err != nil {
+		log.Printf("Error saving AI-enriched strand %s: %v", strand.ID, err)
+		return EnrichmentResult{
+			StrandID: strand.ID,
+			Success:  false,
+			Error:    fmt.Sprintf("Failed to save enriched strand: %v", err),
+		}
+	}
+
+	log.Printf("Database updated for strand %s", strand.ID)
+	log.Printf("Successfully enriched strand %s with AI", strand.ID)
+
+	return EnrichmentResult{
+		StrandID: strand.ID,
+		Success:  true,
+	}
+}
+
+// HandleGetStrands handles GET /strands
+func HandleGetStrands(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+
+	// Get user ID from context (set by auth middleware)
+	userID, _ := r.Context().Value("user_id").(string)
+	if userID == "" {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	// Parse query parameters
+	query := r.URL.Query()
+
+	// Parse tags
+	var tags []string
+	if tagParam := query.Get("tags"); tagParam != "" {
+		tags = strings.Split(tagParam, ",")
+	}
+
+	// Parse pagination parameters
+	page := 1
+	if pageParam := query.Get("page"); pageParam != "" {
+		if p, err := strconv.Atoi(pageParam); err == nil && p > 0 {
+			page = p
+		}
+	}
+
+	limit := 20
+	if limitParam := query.Get("limit"); limitParam != "" {
+		if l, err := strconv.Atoi(limitParam); err == nil && l > 0 && l <= 100 {
+			limit = l
+		}
+	}
+
+	// Get strands
+	strands, err := models.GetStrandsByUser(r.Context(), userID, tags, int64(page), int64(limit))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Return the strands
+	response := StrandResponse{
+		Strands: strands,
+		Count:   len(strands),
+		Page:    page,
+		Limit:   limit,
+	}
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+// HandleGetStrand handles GET /strands/:id
+func HandleGetStrand(w http.ResponseWriter, r *http.Request, id string) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+
+	// Get user ID from context (set by auth middleware)
+	userID, _ := r.Context().Value("user_id").(string)
+	if userID == "" {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	// Get the strand
+	strand, err := models.GetStrand(r.Context(), id)
+	if err != nil {
+		http.Error(w, "Strand not found", http.StatusNotFound)
+		return
+	}
+
+	// Verify ownership
+	if strand.UserID != userID {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	// Return the strand
+	response := StrandResponse{
+		Strand: strand,
+	}
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+// HandleUpdateStrand handles PUT /strands/:id
+func HandleUpdateStrand(w http.ResponseWriter, r *http.Request, id string) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("HandleUpdateStrand: recovered from panic: %v", r)
+			http.Error(w, `{"error": "internal server error due to panic"}`, http.StatusInternalServerError)
+		}
+	}()
+
+	if r.Method != http.MethodPut {
+		http.Error(w, `{"error": "method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+
+	// Get user ID from context (set by auth middleware)
+	userID, _ := r.Context().Value("user_id").(string)
+	if userID == "" {
+		http.Error(w, `{"error": "unauthorized"}`, http.StatusUnauthorized)
+		return
+	}
+
+	// Create a timeout context to prevent hanging operations
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+
+	// Get the existing strand
+	strand, err := models.GetStrand(ctx, id)
+	if err != nil {
+		log.Printf("HandleUpdateStrand: error getting strand %s: %v", id, err)
+		http.Error(w, `{"error": "strand not found"}`, http.StatusNotFound)
+		return
+	}
+
+	// Verify ownership
+	if strand.UserID != userID {
+		http.Error(w, `{"error": "unauthorized"}`, http.StatusUnauthorized)
+		return
+	}
+
+	// Parse request body
+	var req StrandRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		log.Printf("HandleUpdateStrand: error decoding request body: %v", err)
+		http.Error(w, `{"error": "invalid request body"}`, http.StatusBadRequest)
+		return
+	}
+
+	// Track if content changed to determine if we need AI reprocessing
+	contentChanged := false
+
+	// Update fields
+	if req.Content != "" && req.Content != strand.Content {
+		strand.Content = req.Content
+		contentChanged = true
+
+		// Always update the basic summary immediately
+		strand.Summary = generateBasicSummary(req.Content)
+	}
+
+	// Update tags if provided
+	if len(req.Tags) > 0 {
+		// Normalize tags manually
+		normalizedTags := []string{}
+		seen := make(map[string]struct{})
+		for _, tag := range req.Tags {
+			tag = strings.ToLower(strings.TrimSpace(tag))
+			if tag == "" || tag == "manual" {
+				continue
+			}
+			if _, exists := seen[tag]; !exists {
+				normalizedTags = append(normalizedTags, tag)
+				seen[tag] = struct{}{}
+			}
+		}
+		strand.Tags = normalizedTags
+	}
+
+	// Mark for AI reprocessing if content changed
+	if contentChanged {
+		strand.SyncedWithAI = false
+	}
+
+	strand.UpdatedAt = time.Now()
+
+	// Save the updated strand
+	updatedStrand, err := models.SaveStrand(ctx, strand)
+	if err != nil {
+		log.Printf("HandleUpdateStrand: error saving strand %s: %v", id, err)
+		response := StrandResponse{
+			Error: "Failed to save strand: " + err.Error(),
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// Try to enrich with AI in the background if content changed
+	if contentChanged {
+		// Create a new background context that won't be canceled when the request ends
+		bgCtx := context.Background()
+
+		// Use a separate goroutine with panic recovery to prevent crashes
+		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("RECOVERED from panic in enrichStrandWithAI during update: %v", r)
+				}
+			}()
+			enrichStrandWithAI(bgCtx, updatedStrand)
+		}()
+	}
+
+	// Return the updated strand
+	response := StrandResponse{
+		Strand: updatedStrand,
+	}
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		log.Printf("HandleUpdateStrand: error encoding response: %v", err)
+		http.Error(w, `{"error": "failed to encode response"}`, http.StatusInternalServerError)
+	}
+}
+
+// HandleDeleteStrand handles DELETE /strands/:id
+func HandleDeleteStrand(w http.ResponseWriter, r *http.Request, id string) {
+	if r.Method != http.MethodDelete {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Get user ID from context (set by auth middleware)
+	userID, _ := r.Context().Value("user_id").(string)
+	if userID == "" {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	// Get the strand to verify ownership
+	strand, err := models.GetStrand(r.Context(), id)
+	if err != nil {
+		http.Error(w, "Strand not found", http.StatusNotFound)
+		return
+	}
+
+	// Verify ownership
+	if strand.UserID != userID {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	// Delete the strand
+	if err := models.DeleteStrand(r.Context(), id); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Return success
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// HandleGetTags handles GET /strands/tags
+func HandleGetTags(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+
+	// Get user ID from context (set by auth middleware)
+	userID, _ := r.Context().Value("user_id").(string)
+	if userID == "" {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	// Get all tags for the user
+	tags, err := models.GetAllTags(r.Context(), userID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Return the tags
+	response := StrandResponse{
+		Tags: tags,
+	}
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+// HandleSyncStrand handles POST /strands/:id/sync
+func HandleSyncStrand(w http.ResponseWriter, r *http.Request, id string) {
+	log.Printf("🔍 HandleSyncStrand: Starting sync for strand %s", id)
+
+	if r.Method != http.MethodPost {
+		http.Error(w, `{"error": "method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+
+	// Get user ID from context (set by auth middleware)
+	userID, _ := r.Context().Value("user_id").(string)
+	if userID == "" {
+		log.Printf("❌ HandleSyncStrand: No user ID found in context for strand %s", id)
+		http.Error(w, `{"error": "unauthorized"}`, http.StatusUnauthorized)
+		return
+	}
+
+	log.Printf("🔍 HandleSyncStrand: Processing sync for strand %s (user: %s)", id, userID)
+
+	// Get the strand
+	strand, err := models.GetStrand(r.Context(), id)
+	if err != nil {
+		log.Printf("❌ HandleSyncStrand: Strand %s not found: %v", id, err)
+		http.Error(w, `{"error": "strand not found"}`, http.StatusNotFound)
+		return
+	}
+
+	// Verify ownership
+	if strand.UserID != userID {
+		log.Printf("❌ HandleSyncStrand: Strand %s does not belong to user %s", id, userID)
+		http.Error(w, `{"error": "unauthorized"}`, http.StatusUnauthorized)
+		return
+	}
+
+	log.Printf("🔍 HandleSyncStrand: Strand %s found and ownership verified", id)
+
+	// Mark as unsynced to force re-processing
+	strand.SyncedWithAI = false
+
+	// Spawn background goroutine for enrichment using independent context
+	bgCtx := context.Background()
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("❌ RECOVERED from panic in HandleSyncStrand enrichment: %v", r)
+			}
+		}()
+
+		log.Printf("🔄 HandleSyncStrand: Starting background enrichment for strand %s", id)
+		result := enrichStrandWithAI(bgCtx, strand)
+		if !result.Success {
+			log.Printf("❌ HandleSyncStrand: Sync enrichment failed for strand %s: %s", result.StrandID, result.Error)
+		} else {
+			log.Printf("✅ HandleSyncStrand: Sync completed successfully for strand %s", result.StrandID)
+		}
+	}()
+
+	// Return immediate response
+	response := SyncResponse{
+		Status:  "success",
+		Message: "Strand sync initiated successfully",
+	}
+	w.WriteHeader(http.StatusOK)
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		log.Printf("❌ HandleSyncStrand: Error encoding response for strand %s: %v", id, err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+
+	log.Printf("✅ HandleSyncStrand: Sync initiated successfully for strand %s", id)
+}
+
+// HandleSyncStrandsWithAI handles POST /strands/sync
+func HandleSyncStrandsWithAI(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+
+	// Get user ID from context (set by auth middleware)
+	userID, _ := r.Context().Value("user_id").(string)
+	if userID == "" {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	// Get all strands for the user (both synced and unsynced)
+	strands, err := models.GetStrandsByUser(r.Context(), userID, nil, 1, 1000) // Get up to 1000 strands
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Count how many strands were synced
+	syncedCount := 0
+
+	// Sync each strand with AI (including already synced ones for manual sync)
+	for i := range strands {
+		// For manual sync, we sync all strands regardless of previous sync status
+		// This allows users to get updated AI analysis with more context over time
+
+		// Mark as unsynced to force re-processing
+		strands[i].SyncedWithAI = false
+
+		// Use the same enrichment function we use for new strands
+		enrichStrandWithAI(r.Context(), &strands[i])
+		syncedCount++
+	}
+
+	// Return sync results
+	response := StrandResponse{
+		Count: syncedCount,
+	}
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+// generateBasicSummary creates a simple summary when AI service is unavailable
+func generateBasicSummary(content string) string {
+	if len(content) > 150 {
+		return content[:147] + "..."
+	}
+	return content
+}
+
+// Helper function to check if a slice contains a string
+func contains(slice []string, item string) bool {
+	for _, s := range slice {
+		if s == item {
+			return true
+		}
+	}
+	return false
+}
+
+// Helper function to remove duplicate tags
+func removeDuplicateTags(tags []string) []string {
+	// Create a map to track seen tags
+	seen := make(map[string]bool)
+	result := []string{}
+
+	// Add only unseen tags to the result
+	for _, tag := range tags {
+		// Skip empty tags
+		if tag == "" {
+			continue
+		}
+
+		// Convert to lowercase
+		tag = strings.ToLower(strings.TrimSpace(tag))
+
+		if !seen[tag] {
+			seen[tag] = true
+			result = append(result, tag)
+		}
+	}
+
+	return result
+}
+
+// HandleSyncUnsyncedStrandsWithAI handles POST /strands/sync-unsynced
+func HandleSyncUnsyncedStrandsWithAI(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+
+	// Get user ID from context (set by auth middleware)
+	userID, _ := r.Context().Value("user_id").(string)
+	if userID == "" {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	// Get only unsynced strands for the user using optimized query
+	unsyncedStrands, err := models.GetUnsyncedStrandsByUser(r.Context(), userID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Count how many strands were synced
+	syncedCount := 0
+
+	// Sync only unsynced strands with AI
+	for i := range unsyncedStrands {
+		// Mark as unsynced to force re-processing (though they should already be unsynced)
+		unsyncedStrands[i].SyncedWithAI = false
+
+		// Use the same enrichment function we use for new strands
+		enrichStrandWithAI(r.Context(), &unsyncedStrands[i])
+		syncedCount++
+	}
+
+	// Return sync results
+	response := StrandResponse{
+		Count: syncedCount,
+	}
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+// HandleGetSyncHistory handles GET /strands/:id/sync-history
+func HandleGetSyncHistory(w http.ResponseWriter, r *http.Request, id string) {
+	if r.Method != http.MethodGet {
+		http.Error(w, `{"error": "method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+
+	// Get user ID from context (set by auth middleware)
+	userID, _ := r.Context().Value("user_id").(string)
+	if userID == "" {
+		http.Error(w, `{"error": "unauthorized"}`, http.StatusUnauthorized)
+		return
+	}
+
+	// Get the strand
+	strand, err := models.GetStrand(r.Context(), id)
+	if err != nil {
+		http.Error(w, `{"error": "strand not found"}`, http.StatusNotFound)
+		return
+	}
+
+	// Verify ownership
+	if strand.UserID != userID {
+		http.Error(w, `{"error": "unauthorized"}`, http.StatusUnauthorized)
+		return
+	}
+
+	// Return sync history
+	response := map[string]interface{}{
+		"sync_history": strand.SyncHistory,
+	}
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		http.Error(w, `{"error": "failed to encode response"}`, http.StatusInternalServerError)
+	}
+}
+
+// RollbackRequest represents a request to rollback to a specific sync version
+type RollbackRequest struct {
+	Timestamp string `json:"timestamp"`
+	SyncIndex int    `json:"sync_index,omitempty"`
+}
+
+// HandleRollbackStrand handles POST /strands/:id/rollback
+func HandleRollbackStrand(w http.ResponseWriter, r *http.Request, id string) {
+	if r.Method != http.MethodPost {
+		http.Error(w, `{"error": "method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+
+	// Get user ID from context (set by auth middleware)
+	userID, _ := r.Context().Value("user_id").(string)
+	if userID == "" {
+		http.Error(w, `{"error": "unauthorized"}`, http.StatusUnauthorized)
+		return
+	}
+
+	// Get the strand
+	strand, err := models.GetStrand(r.Context(), id)
+	if err != nil {
+		http.Error(w, `{"error": "strand not found"}`, http.StatusNotFound)
+		return
+	}
+
+	// Verify ownership
+	if strand.UserID != userID {
+		http.Error(w, `{"error": "unauthorized"}`, http.StatusUnauthorized)
+		return
+	}
+
+	// Parse request body
+	var req RollbackRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		log.Printf("HandleRollbackStrand: error decoding request body: %v", err)
+		http.Error(w, `{"error": "invalid request body"}`, http.StatusBadRequest)
+		return
+	}
+
+	// Find the sync log to rollback to
+	var targetLog *models.SyncLog
+	if req.Timestamp != "" {
+		// Find by timestamp
+		for i := range strand.SyncHistory {
+			if strand.SyncHistory[i].Timestamp.Format(time.RFC3339) == req.Timestamp {
+				targetLog = &strand.SyncHistory[i]
+				break
+			}
+		}
+	} else if req.SyncIndex >= 0 && req.SyncIndex < len(strand.SyncHistory) {
+		// Find by index
+		targetLog = &strand.SyncHistory[req.SyncIndex]
+	}
+
+	if targetLog == nil {
+		http.Error(w, `{"error": "sync log not found"}`, http.StatusNotFound)
+		return
+	}
+
+	// Store current state before rollback
+	currentSummary := strand.Summary
+	currentTags := strand.Tags
+
+	// Rollback to the target version
+	strand.Summary = targetLog.Summary
+	strand.Tags = targetLog.Tags
+	strand.UpdatedAt = time.Now()
+
+	// Add a new sync log entry for the rollback
+	rollbackLog := models.SyncLog{
+		Timestamp:  time.Now(),
+		Summary:    targetLog.Summary,
+		Tags:       targetLog.Tags,
+		SyncedByAI: false,
+		Notes:      fmt.Sprintf("Rolled back to version from %s", targetLog.Timestamp.Format(time.RFC3339)),
+	}
+
+	// Initialize sync history if nil
+	if strand.SyncHistory == nil {
+		strand.SyncHistory = []models.SyncLog{}
+	}
+	strand.SyncHistory = append(strand.SyncHistory, rollbackLog)
+
+	// Save the updated strand
+	updatedStrand, err := models.SaveStrand(r.Context(), strand)
+	if err != nil {
+		log.Printf("HandleRollbackStrand: error saving strand %s: %v", id, err)
+		// Restore original state
+		strand.Summary = currentSummary
+		strand.Tags = currentTags
+		http.Error(w, `{"error": "failed to rollback strand"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// Return the updated strand
+	response := StrandResponse{
+		Strand: updatedStrand,
+	}
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		log.Printf("HandleRollbackStrand: error encoding response: %v", err)
+		http.Error(w, `{"error": "failed to encode response"}`, http.StatusInternalServerError)
+	}
+}
+
+// FileUploadRequest represents a request to upload files to a strand
+type FileUploadRequest struct {
+	StrandID string `json:"strand_id"`
+}
+
+// FileUploadResponse represents the response for a file upload operation
+type FileUploadResponse struct {
+	StrandID    string                  `json:"strand_id"`
+	Attachments []models.FileAttachment `json:"attachments"`
+	Error       string                  `json:"error,omitempty"`
+}
+
+// HandleUploadFiles handles POST /strands/:id/upload
+func HandleUploadFiles(w http.ResponseWriter, r *http.Request, strandID string) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("HandleUploadFiles: recovered from panic: %v", r)
+			http.Error(w, `{"error": "internal server error due to panic"}`, http.StatusInternalServerError)
+		}
+	}()
+
+	if r.Method != http.MethodPost {
+		http.Error(w, `{"error": "method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+
+	// Get user ID from context (set by auth middleware)
+	userID, _ := r.Context().Value("user_id").(string)
+	if userID == "" {
+		http.Error(w, `{"error": "unauthorized"}`, http.StatusUnauthorized)
+		return
+	}
+
+	// Get the strand
+	strand, err := models.GetStrand(r.Context(), strandID)
+	if err != nil {
+		log.Printf("HandleUploadFiles: error getting strand %s: %v", strandID, err)
+		http.Error(w, `{"error": "strand not found"}`, http.StatusNotFound)
+		return
+	}
+
+	// Verify ownership
+	if strand.UserID != userID {
+		http.Error(w, `{"error": "unauthorized"}`, http.StatusUnauthorized)
+		return
+	}
+
+	// Parse multipart form with reasonable limits
+	err = r.ParseMultipartForm(32 << 20) // 32 MB max
+	if err != nil {
+		log.Printf("HandleUploadFiles: error parsing multipart form: %v", err)
+		http.Error(w, `{"error": "failed to parse form data"}`, http.StatusBadRequest)
+		return
+	}
+
+	// Get files from form
+	files := r.MultipartForm.File["files"]
+	if len(files) == 0 {
+		http.Error(w, `{"error": "no files provided"}`, http.StatusBadRequest)
+		return
+	}
+
+	// Create uploads directory if it doesn't exist
+	uploadDir := "./uploads"
+	if err := os.MkdirAll(uploadDir, 0755); err != nil {
+		log.Printf("HandleUploadFiles: error creating upload directory: %v", err)
+		http.Error(w, `{"error": "failed to create upload directory"}`, http.StatusInternalServerError)
+		return
+	}
+
+	var uploadedAttachments []models.FileAttachment
+
+	// Process each file
+	for _, fileHeader := range files {
+		// Validate file size (10MB max per file)
+		if fileHeader.Size > 10<<20 {
+			log.Printf("HandleUploadFiles: file %s too large: %d bytes", fileHeader.Filename, fileHeader.Size)
+			continue // Skip this file but continue with others
+		}
+
+		// Validate file type
+		allowedTypes := map[string]bool{
+			"image/jpeg":         true,
+			"image/png":          true,
+			"image/gif":          true,
+			"image/webp":         true,
+			"video/mp4":          true,
+			"video/mpeg":         true,
+			"video/quicktime":    true,
+			"video/webm":         true,
+			"application/pdf":    true,
+			"text/plain":         true,
+			"application/msword": true,
+			"application/vnd.openxmlformats-officedocument.wordprocessingml.document": true,
+		}
+
+		file, err := fileHeader.Open()
+		if err != nil {
+			log.Printf("HandleUploadFiles: error opening file %s: %v", fileHeader.Filename, err)
+			continue
+		}
+		defer file.Close()
+
+		// Read first 512 bytes to detect MIME type
+		buffer := make([]byte, 512)
+		_, err = file.Read(buffer)
+		if err != nil && err != io.EOF {
+			log.Printf("HandleUploadFiles: error reading file %s: %v", fileHeader.Filename, err)
+			continue
+		}
+
+		// Detect MIME type
+		mimeType := http.DetectContentType(buffer)
+		if !allowedTypes[mimeType] {
+			log.Printf("HandleUploadFiles: unsupported file type %s for file %s", mimeType, fileHeader.Filename)
+			continue
+		}
+
+		// Reset file pointer
+		file.Seek(0, 0)
+
+		// Generate unique filename
+		fileExt := filepath.Ext(fileHeader.Filename)
+		uniqueFilename := uuid.New().String() + fileExt
+		filePath := filepath.Join(uploadDir, uniqueFilename)
+
+		// Create the file on disk
+		dst, err := os.Create(filePath)
+		if err != nil {
+			log.Printf("HandleUploadFiles: error creating file %s: %v", filePath, err)
+			continue
+		}
+		defer dst.Close()
+
+		// Copy the uploaded file to the destination file
+		_, err = io.Copy(dst, file)
+		if err != nil {
+			log.Printf("HandleUploadFiles: error copying file %s: %v", fileHeader.Filename, err)
+			os.Remove(filePath) // Clean up failed file
+			continue
+		}
+
+		// Create file attachment record
+		attachment := models.FileAttachment{
+			ID:           uuid.New().String(),
+			Filename:     uniqueFilename,
+			OriginalName: fileHeader.Filename,
+			MimeType:     mimeType,
+			Size:         fileHeader.Size,
+			URL:          "/uploads/" + uniqueFilename,
+			UploadedAt:   time.Now(),
+		}
+
+		uploadedAttachments = append(uploadedAttachments, attachment)
+	}
+
+	if len(uploadedAttachments) == 0 {
+		http.Error(w, `{"error": "no valid files uploaded"}`, http.StatusBadRequest)
+		return
+	}
+
+	// Update strand with new attachments
+	if strand.Attachments == nil {
+		strand.Attachments = []models.FileAttachment{}
+	}
+	strand.Attachments = append(strand.Attachments, uploadedAttachments...)
+	strand.UpdatedAt = time.Now()
+
+	// Save the updated strand
+	_, err = models.SaveStrand(r.Context(), strand)
+	if err != nil {
+		log.Printf("HandleUploadFiles: error saving strand %s: %v", strandID, err)
+		// Clean up uploaded files
+		for _, attachment := range uploadedAttachments {
+			os.Remove(filepath.Join(uploadDir, attachment.Filename))
+		}
+		http.Error(w, `{"error": "failed to save strand with attachments"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// Return success response
+	response := FileUploadResponse{
+		StrandID:    strandID,
+		Attachments: uploadedAttachments,
+	}
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		log.Printf("HandleUploadFiles: error encoding response: %v", err)
+		http.Error(w, `{"error": "failed to encode response"}`, http.StatusInternalServerError)
+	}
+}
+
+// HandleDeleteAttachment handles DELETE /strands/:id/attachments/:attachmentId
+func HandleDeleteAttachment(w http.ResponseWriter, r *http.Request, strandID, attachmentID string) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("HandleDeleteAttachment: recovered from panic: %v", r)
+			http.Error(w, `{"error": "internal server error due to panic"}`, http.StatusInternalServerError)
+		}
+	}()
+
+	if r.Method != http.MethodDelete {
+		http.Error(w, `{"error": "method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+
+	// Get user ID from context (set by auth middleware)
+	userID, _ := r.Context().Value("user_id").(string)
+	if userID == "" {
+		http.Error(w, `{"error": "unauthorized"}`, http.StatusUnauthorized)
+		return
+	}
+
+	// Get the strand
+	strand, err := models.GetStrand(r.Context(), strandID)
+	if err != nil {
+		log.Printf("HandleDeleteAttachment: error getting strand %s: %v", strandID, err)
+		http.Error(w, `{"error": "strand not found"}`, http.StatusNotFound)
+		return
+	}
+
+	// Verify ownership
+	if strand.UserID != userID {
+		http.Error(w, `{"error": "unauthorized"}`, http.StatusUnauthorized)
+		return
+	}
+
+	// Find and remove the attachment
+	var updatedAttachments []models.FileAttachment
+	var attachmentToDelete *models.FileAttachment
+
+	for _, attachment := range strand.Attachments {
+		if attachment.ID == attachmentID {
+			attachmentToDelete = &attachment
+		} else {
+			updatedAttachments = append(updatedAttachments, attachment)
+		}
+	}
+
+	if attachmentToDelete == nil {
+		http.Error(w, `{"error": "attachment not found"}`, http.StatusNotFound)
+		return
+	}
+
+	// Update strand
+	strand.Attachments = updatedAttachments
+	strand.UpdatedAt = time.Now()
+
+	// Save the updated strand
+	_, err = models.SaveStrand(r.Context(), strand)
+	if err != nil {
+		log.Printf("HandleDeleteAttachment: error saving strand %s: %v", strandID, err)
+		http.Error(w, `{"error": "failed to remove attachment"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// Delete the physical file
+	filePath := filepath.Join("./uploads", attachmentToDelete.Filename)
+	if err := os.Remove(filePath); err != nil && !os.IsNotExist(err) {
+		log.Printf("HandleDeleteAttachment: warning: failed to delete file %s: %v", filePath, err)
+		// Continue anyway since the database record is removed
+	}
+
+	// Return success
+	w.WriteHeader(http.StatusNoContent)
+}

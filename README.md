@@ -59,6 +59,72 @@ The backend uses MongoDB to store notes and planner data, with a comprehensive A
 - **Drag and Drop Interface**: Intuitive drag-and-drop interface for moving cards and lanes.
 - **Real-time Updates**: Changes are automatically saved as you work.
 
+### Strands
+- **Content Capture**: Save and organize pieces of information as "strands"
+- **AI Enrichment**: Automatic tagging and summarization of content using AI
+- **Per-Strand Sync**: Manually trigger AI enrichment for individual strands
+- **Sync History**: Track all sync operations with timestamps, summaries, and tags
+- **Version Rollback**: Restore strands to previous sync states
+- **Resilient Saving**: Strands are always saved to the database, even when AI services are unavailable
+- **Asynchronous Processing**: Background processing for AI enrichment without blocking user interactions
+- **Tag Management**: Add, remove, and filter content by tags
+- **Related Content**: Discover connections between strands based on shared tags
+
+  ### LangGraph & AI Workflow
+
+  ZuraBase now integrates **LangGraph-based AI workflows** inspired by the [FreeCodeCamp LangChain/LangGraph guide](https://www.freecodecamp.org/news/how-to-use-langchain-and-langgraph-a-beginners-guide-to-ai-workflows/).
+
+  #### 🧠 Key Improvements
+  - **Graph-Oriented Orchestration:** replaces linear HTTP AI calls with modular graph workflows
+  - **Metadata-Aware Analysis:** user and LLM profile context influence results
+  - **Structured Responses:** standardized JSON output schema improves reliability
+  - **Observability:** enables step-level tracing and debugging
+  - **Unified Lang Stack:** fully LangChain-Go and LangGraph
+
+  LangGraph now powers all enrichment workflows via the official LangChain-Go library.
+  All AI processing (summarization, tagging, context linking) routes through LangChain-Go chains or LangGraph workflows,
+  eliminating redundant clients and factory abstractions. The backend uses a single, maintainable AI orchestration layer with consistent typed responses.
+  and related content discovery operate as discrete graph nodes with traceable
+  connections and structured outputs.
+
+  Example architecture:
+  ```
+  ┌──────────────────────────────┐
+  │     LangGraph Workflow       │
+  ├──────────────────────────────┤
+  │ Prompt Builder  →  Analyzer  │
+  │ Context Provider →  Parser   │
+  └──────────────────────────────┘
+  ```
+
+  The backend now communicates with a local or remote LangGraph service at
+  `http://localhost:8000/api/v1/langgraph/run`, sending structured workflow
+  requests with optional trace and telemetry support.
+
+  ### LangGraph Workflow Overview
+
+  The ZuraBase backend now uses LangGraph to manage structured AI workflows through JSON graph execution calls.
+
+  **Endpoint:** `POST /api/v1/langgraph/run`
+
+  **Example Request**
+  ```json
+  {
+    "workflow": "content_analysis_graph",
+    "inputs": {
+      "content": "Example strand content",
+      "source": "manual",
+      "metadata": {
+        "user_id": "123",
+        "profile_id": "p123"
+      }
+    },
+    "options": {
+      "trace": true,
+      "return_schema": true
+    }
+  }
+
 ## Getting Started
 
 ### Prerequisites
@@ -127,6 +193,19 @@ devbox run test_be
 | POST   | `/planner/:id/lanes/reorder`              | Reorder lanes                                  |
 | POST   | `/planner/:id/lane/:laneId/cards/reorder` | Reorder cards in a lane                        |
 
+### Strands API
+
+| Method | Endpoint            | Description                                      |
+| ------ | ------------------- | ------------------------------------------------ |
+| GET    | `/strands`          | Retrieve all strands with optional tag filtering |
+| GET    | `/strands/:id`      | Retrieve a strand by ID                          |
+| POST   | `/strands`          | Create a new strand                              |
+| PUT    | `/strands/:id`      | Update an existing strand                        |
+| DELETE | `/strands/:id`      | Delete a strand                                  |
+| GET    | `/strands/tags`     | Get all tags used across strands                 |
+| POST   | `/strands/:id/sync` | Sync a specific strand with AI                   |
+| POST   | `/strands/sync`     | Manually trigger AI enrichment for all strands   |
+
 ## Contributing
 - **🐛 [Report Issues](https://github.com/jomakori/zurabase/issues)**: Submit bugs found or log feature requests for the `zurabase` project.
 - **💡 [Submit Pull Requests](https://github.com/jomakori/zurabase/pulls)**: Review open PRs, and submit your own PRs.
@@ -170,3 +249,4 @@ devbox run test_be
       <img src="https://contrib.rocks/image?repo=jomakori/zurabase">
    </a>
 </p>
+
