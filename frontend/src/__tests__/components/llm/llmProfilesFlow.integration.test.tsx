@@ -48,29 +48,19 @@ jest.mock('@/shared/components/LLMProfileWizard', () => ({
   },
 }));
 
-// Mock the hooks
+// Mock the hooks - create jest mocks that can be reconfigured
+const mockUseDeleteLLMProfile = jest.fn();
+const mockUseSetDefaultLLMProfile = jest.fn();
+const mockUseTestLLMConnection = jest.fn();
+const mockUseCreateLLMProfile = jest.fn();
+const mockUseUpdateLLMProfile = jest.fn();
+
 jest.mock('@/shared/hooks/llmProfilesHooks', () => ({
-  useDeleteLLMProfile: () => ({
-    deleteProfile: jest.fn().mockResolvedValue({}),
-    loading: false,
-  }),
-  useSetDefaultLLMProfile: () => ({
-    setDefaultProfile: jest.fn().mockResolvedValue({}),
-    loading: false,
-  }),
-  useTestLLMConnection: () => ({
-    testConnection: jest.fn().mockResolvedValue({ success: true, message: 'Connected' }),
-    loading: false,
-    testResult: null,
-  }),
-  useCreateLLMProfile: () => ({
-    createProfile: jest.fn().mockResolvedValue({ profile: { id: 'new-profile-id' } }),
-    loading: false,
-  }),
-  useUpdateLLMProfile: () => ({
-    updateProfile: jest.fn().mockResolvedValue({ profile: { id: 'updated-profile-id' } }),
-    loading: false,
-  }),
+  useDeleteLLMProfile: mockUseDeleteLLMProfile,
+  useSetDefaultLLMProfile: mockUseSetDefaultLLMProfile,
+  useTestLLMConnection: mockUseTestLLMConnection,
+  useCreateLLMProfile: mockUseCreateLLMProfile,
+  useUpdateLLMProfile: mockUseUpdateLLMProfile,
 }));
 
 // Mock the context
@@ -93,6 +83,29 @@ describe('LLM Profiles Integration Workflows', () => {
       loading: false,
       error: null,
       refetch: jest.fn().mockResolvedValue({}),
+    });
+
+    // Set up default hook mocks
+    mockUseDeleteLLMProfile.mockReturnValue({
+      deleteProfile: jest.fn().mockResolvedValue({}),
+      loading: false,
+    });
+    mockUseSetDefaultLLMProfile.mockReturnValue({
+      setDefaultProfile: jest.fn().mockResolvedValue({}),
+      loading: false,
+    });
+    mockUseTestLLMConnection.mockReturnValue({
+      testConnection: jest.fn().mockResolvedValue({ success: true, message: 'Connected' }),
+      loading: false,
+      testResult: null,
+    });
+    mockUseCreateLLMProfile.mockReturnValue({
+      createProfile: jest.fn().mockResolvedValue({ profile: { id: 'new-profile-id' } }),
+      loading: false,
+    });
+    mockUseUpdateLLMProfile.mockReturnValue({
+      updateProfile: jest.fn().mockResolvedValue({ profile: { id: 'updated-profile-id' } }),
+      loading: false,
     });
   });
 
@@ -325,11 +338,10 @@ describe('LLM Profiles Integration Workflows', () => {
   describe('Connection Testing Workflow', () => {
     it('tests connection from wizard and loads models', async () => {
       // Mock the test connection hook to return success
-      const { useTestLLMConnection } = require('@/shared/hooks/llmProfilesHooks');
-      useTestLLMConnection.mockReturnValue({
-        testConnection: jest.fn().mockResolvedValue({ 
-          success: true, 
-          message: 'Connection successful' 
+      mockUseTestLLMConnection.mockReturnValue({
+        testConnection: jest.fn().mockResolvedValue({
+          success: true,
+          message: 'Connection successful'
         }),
         loading: false,
         testResult: { success: true, message: 'Connection successful' },
@@ -347,7 +359,7 @@ describe('LLM Profiles Integration Workflows', () => {
 
       // The wizard doesn't show test button in our mock, but in real component it would
       // For integration test, we'll verify the hook is properly configured
-      expect(useTestLLMConnection).toHaveBeenCalled();
+      expect(mockUseTestLLMConnection).toHaveBeenCalled();
     });
 
     it('handles connection test failure', async () => {

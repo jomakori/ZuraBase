@@ -24,35 +24,37 @@ jest.mock('@/features/strands/services/syncService', () => ({
 // Mock child components
 jest.mock('@/features/strands/components/StrandCard', () => ({
   __esModule: true,
-  default: ({ strand, onTagClick, onSync }: any) => (
-    <div data-testid={`strand-card-${strand.id}`}>
-      <div>{strand.content}</div>
-      <button onClick={() => onTagClick?.(strand.tags[0])}>Tag</button>
-      <button onClick={() => onSync?.(strand)}>Sync</button>
-    </div>
-  ),
+  default: ({ strand, onTagClick, onSync }: any) => {
+    const React = require('react');
+    return React.createElement('div', { 'data-testid': `strand-card-${strand.id}` },
+      React.createElement('div', null, strand.content),
+      React.createElement('button', { onClick: () => onTagClick?.(strand.tags[0]) }, 'Tag'),
+      React.createElement('button', { onClick: () => onSync?.(strand) }, 'Sync')
+    );
+  },
 }));
 
 jest.mock('@/features/strands/components/TagFilter', () => ({
   __esModule: true,
-  default: ({ onTagSelect, selectedTags }: any) => (
-    <div data-testid="tag-filter">
-      <button onClick={() => onTagSelect('tag1')}>Select Tag1</button>
-      <div>Selected: {selectedTags.join(',')}</div>
-    </div>
-  ),
+  default: ({ onTagSelect, selectedTags }: any) => {
+    const React = require('react');
+    return React.createElement('div', { 'data-testid': 'tag-filter' },
+      React.createElement('button', { onClick: () => onTagSelect('tag1') }, 'Select Tag1'),
+      React.createElement('div', null, 'Selected: ', selectedTags.join(','))
+    );
+  },
 }));
 
 jest.mock('@/features/strands/components/SyncProgressModal', () => ({
   __esModule: true,
-  default: ({ isOpen, progress, onClose, onCancel }: any) =>
-    isOpen ? (
-      <div data-testid="sync-progress-modal">
-        <div>Progress: {progress.status}</div>
-        <button onClick={onClose}>Close</button>
-        <button onClick={onCancel}>Cancel</button>
-      </div>
-    ) : null,
+  default: ({ isOpen, progress, onClose, onCancel }: any) => {
+    const React = require('react');
+    return isOpen ? React.createElement('div', { 'data-testid': 'sync-progress-modal' },
+      React.createElement('div', null, 'Progress: ', progress.status),
+      React.createElement('button', { onClick: onClose }, 'Close'),
+      React.createElement('button', { onClick: onCancel }, 'Cancel')
+    ) : null;
+  },
 }));
 
 describe('StrandsList', () => {

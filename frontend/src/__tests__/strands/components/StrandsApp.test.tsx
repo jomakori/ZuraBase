@@ -32,77 +32,81 @@ jest.mock('@/features/strands/services/syncService', () => ({
 // Mock child components to simplify testing
 jest.mock('@/features/strands/components/StrandsList', () => ({
   __esModule: true,
-  default: ({ onStrandSelect, onCreateStrand }: any) => (
-    <div data-testid="strands-list">
-      <button onClick={() => onStrandSelect?.(mockStrands[0])}>Select Strand</button>
-      <button onClick={onCreateStrand}>Create Strand</button>
-    </div>
-  ),
+  default: ({ onStrandSelect, onCreateStrand }: any) => {
+    const React = require('react');
+    return React.createElement('div', { 'data-testid': 'strands-list' },
+      React.createElement('button', { onClick: () => onStrandSelect?.(mockStrands[0]) }, 'Select Strand'),
+      React.createElement('button', { onClick: onCreateStrand }, 'Create Strand')
+    );
+  },
 }));
 
 jest.mock('@/features/strands/components/StrandDetail', () => ({
   __esModule: true,
-  default: ({ strandId, onBack }: any) => (
-    <div data-testid="strand-detail">
-      <div>Strand Detail for {strandId}</div>
-      <button onClick={onBack}>Back</button>
-    </div>
-  ),
+  default: ({ strandId, onBack }: any) => {
+    const React = require('react');
+    return React.createElement('div', { 'data-testid': 'strand-detail' },
+      React.createElement('div', null, 'Strand Detail for ', strandId),
+      React.createElement('button', { onClick: onBack }, 'Back')
+    );
+  },
 }));
 
 jest.mock('@/features/strands/components/ImportIntegrationsSection', () => ({
   __esModule: true,
-  default: ({ isLinked, whatsappName, onLogin }: any) => (
-    <div data-testid="import-integrations">
-      <button onClick={onLogin}>Login WhatsApp</button>
-    </div>
-  ),
+  default: ({ isLinked, whatsappName, onLogin }: any) => {
+    const React = require('react');
+    return React.createElement('div', { 'data-testid': 'import-integrations' },
+      React.createElement('button', { onClick: onLogin }, 'Login WhatsApp')
+    );
+  },
 }));
 
 jest.mock('@/shared/components/LLMProfileWizard', () => ({
   __esModule: true,
-  default: ({ onComplete, onSkip }: any) => (
-    <div data-testid="llm-wizard">
-      <button onClick={onComplete}>Complete</button>
-      <button onClick={onSkip}>Skip</button>
-    </div>
-  ),
+  default: ({ onComplete, onSkip }: any) => {
+    const React = require('react');
+    return React.createElement('div', { 'data-testid': 'llm-wizard' },
+      React.createElement('button', { onClick: onComplete }, 'Complete'),
+      React.createElement('button', { onClick: onSkip }, 'Skip')
+    );
+  },
 }));
 
 jest.mock('@/shared/components/Dialog', () => ({
   __esModule: true,
-  default: ({ isOpen, title, message, onConfirm, onCancel }: any) =>
-    isOpen ? (
-      <div data-testid="dialog">
-        <h3>{title}</h3>
-        <p>{message}</p>
-        <button onClick={onConfirm}>Confirm</button>
-        <button onClick={onCancel}>Cancel</button>
-      </div>
-    ) : null,
+  default: ({ isOpen, title, message, onConfirm, onCancel }: any) => {
+    const React = require('react');
+    return isOpen ? React.createElement('div', { 'data-testid': 'dialog' },
+      React.createElement('h3', null, title),
+      React.createElement('p', null, message),
+      React.createElement('button', { onClick: onConfirm }, 'Confirm'),
+      React.createElement('button', { onClick: onCancel }, 'Cancel')
+    ) : null;
+  },
 }));
 
 jest.mock('@/shared/components/Toast', () => ({
   __esModule: true,
-  default: ({ isOpen, message, onClose }: any) =>
-    isOpen ? (
-      <div data-testid="toast">
-        <span>{message}</span>
-        <button onClick={onClose}>Close</button>
-      </div>
-    ) : null,
+  default: ({ isOpen, message, onClose }: any) => {
+    const React = require('react');
+    return isOpen ? React.createElement('div', { 'data-testid': 'toast' },
+      React.createElement('span', null, message),
+      React.createElement('button', { onClick: onClose }, 'Close')
+    ) : null;
+  },
 }));
 
 jest.mock('@/features/strands/components/SyncProgressModal', () => ({
   __esModule: true,
-  default: ({ isOpen, progress, onClose, onCancel }: any) =>
-    isOpen ? (
-      <div data-testid="sync-progress-modal">
-        <div>Progress: {progress.status}</div>
-        <button onClick={onClose}>Close</button>
-        <button onClick={onCancel}>Cancel</button>
-      </div>
-    ) : null,
+  default: ({ isOpen, progress, onClose, onCancel }: any) => {
+    const React = require('react');
+    return isOpen ? React.createElement('div', { 'data-testid': 'sync-progress-modal' },
+      React.createElement('div', null, 'Progress: ', progress.status),
+      React.createElement('button', { onClick: onClose }, 'Close'),
+      React.createElement('button', { onClick: onCancel }, 'Cancel')
+    ) : null;
+  },
 }));
 
 describe('StrandsApp', () => {

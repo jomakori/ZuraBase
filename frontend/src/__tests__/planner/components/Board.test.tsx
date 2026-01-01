@@ -17,34 +17,32 @@ jest.mock('@hello-pangea/dnd', () => ({
     const handleDragEnd = (result: any) => {
       onDragEnd(result);
     };
-    return (
-      <div data-testid="drag-drop-context">
-        {children}
-        <button
-          data-testid="mock-drag-end"
-          onClick={() =>
-            handleDragEnd({
-              destination: { droppableId: 'lane-1', index: 0 },
-              source: { droppableId: 'lane-1', index: 1 },
-              draggableId: 'card-1',
-              type: 'card',
-            })
-          }
-        >
-          Simulate drag end
-        </button>
-      </div>
+    const React = require('react');
+    return React.createElement('div', { 'data-testid': 'drag-drop-context' },
+      children,
+      React.createElement('button', {
+        'data-testid': 'mock-drag-end',
+        onClick: () =>
+          handleDragEnd({
+            destination: { droppableId: 'lane-1', index: 0 },
+            source: { droppableId: 'lane-1', index: 1 },
+            draggableId: 'card-1',
+            type: 'card',
+          })
+      }, 'Simulate drag end')
     );
   },
-  Droppable: ({ children, droppableId, type }: any) =>
-    children(
+  Droppable: ({ children, droppableId, type }: any) => {
+    const React = require('react');
+    return children(
       {
         innerRef: () => {},
         droppableProps: {},
-        placeholder: <div data-testid={`droppable-placeholder-${droppableId}`} />,
+        placeholder: React.createElement('div', { 'data-testid': `droppable-placeholder-${droppableId}` }),
       },
       {}
-    ),
+    );
+  },
   Draggable: ({ children, draggableId, index }: any) =>
     children(
       {
@@ -59,28 +57,27 @@ jest.mock('@hello-pangea/dnd', () => ({
 // Mock the lane component to simplify testing
 jest.mock('@/features/planner/components/Lane', () => ({
   __esModule: true,
-  default: ({ lane, onAddCard, onUpdateCard, onDeleteCard, onUpdateLane, onDeleteLane, onSplitLane }: any) => (
-    <div data-testid={`lane-${lane.id}`}>
-      <h3>{lane.title}</h3>
-      <button onClick={() => onAddCard(lane.id, 'New Card', 'Content', 0)}>Add Card</button>
-      <button onClick={() => onUpdateCard('card-1', 'Updated', 'Updated content')}>Update Card</button>
-      <button onClick={() => onDeleteCard('card-1')}>Delete Card</button>
-      <button onClick={() => onUpdateLane(lane.id, 'Updated Lane', 'Updated description', '#FF0000')}>
-        Update Lane
-      </button>
-      <button onClick={() => onDeleteLane(lane.id)}>Delete Lane</button>
-      <button onClick={() => onSplitLane(lane.id, 'Split Lane', 'Split description', 1, '#00FF00')}>
-        Split Lane
-      </button>
-      <div>
-        {lane.cards.map((card: any) => (
-          <div key={card.id} data-testid={`card-${card.id}`}>
-            {card.fields?.title || card.title}
-          </div>
-        ))}
-      </div>
-    </div>
-  ),
+  default: ({ lane, onAddCard, onUpdateCard, onDeleteCard, onUpdateLane, onDeleteLane, onSplitLane }: any) => {
+    const React = require('react');
+    const children = [];
+    children.push(React.createElement('h3', null, lane.title));
+    children.push(React.createElement('button', { onClick: () => onAddCard(lane.id, 'New Card', 'Content', 0) }, 'Add Card'));
+    children.push(React.createElement('button', { onClick: () => onUpdateCard('card-1', 'Updated', 'Updated content') }, 'Update Card'));
+    children.push(React.createElement('button', { onClick: () => onDeleteCard('card-1') }, 'Delete Card'));
+    children.push(React.createElement('button', { onClick: () => onUpdateLane(lane.id, 'Updated Lane', 'Updated description', '#FF0000') }, 'Update Lane'));
+    children.push(React.createElement('button', { onClick: () => onDeleteLane(lane.id) }, 'Delete Lane'));
+    children.push(React.createElement('button', { onClick: () => onSplitLane(lane.id, 'Split Lane', 'Split description', 1, '#00FF00') }, 'Split Lane'));
+    children.push(
+      React.createElement('div', null,
+        lane.cards.map((card: any) =>
+          React.createElement('div', { key: card.id, 'data-testid': `card-${card.id}` },
+            card.fields?.title || card.title
+          )
+        )
+      )
+    );
+    return React.createElement('div', { 'data-testid': `lane-${lane.id}` }, children);
+  },
 }));
 
 // Mock the API calls

@@ -12,27 +12,30 @@ import { mockPlanner } from '@/shared/fixtures/mockData';
 // Mock the Card component
 jest.mock('@/features/planner/components/Card', () => ({
   __esModule: true,
-  default: ({ card, onUpdate, onDelete, onSelect, isSelected }: any) => (
-    <div data-testid={`card-${card.id}`} className={isSelected ? 'selected' : ''}>
-      <h4>{card.fields?.title || card.title}</h4>
-      <button onClick={() => onUpdate(card.id, 'Updated', 'Updated content')}>Update Card</button>
-      <button onClick={() => onDelete(card.id)}>Delete Card</button>
-      <button onClick={() => onSelect(card.id)}>Select Card</button>
-    </div>
-  ),
+  default: ({ card, onUpdate, onDelete, onSelect, isSelected }: any) => {
+    const React = require('react');
+    return React.createElement('div', { 'data-testid': `card-${card.id}`, className: isSelected ? 'selected' : '' },
+      React.createElement('h4', null, card.fields?.title || card.title),
+      React.createElement('button', { onClick: () => onUpdate(card.id, 'Updated', 'Updated content') }, 'Update Card'),
+      React.createElement('button', { onClick: () => onDelete(card.id) }, 'Delete Card'),
+      React.createElement('button', { onClick: () => onSelect(card.id) }, 'Select Card')
+    );
+  },
 }));
 
 // Mock drag‑and‑drop
 jest.mock('@hello-pangea/dnd', () => ({
-  Droppable: ({ children, droppableId }: any) =>
-    children(
+  Droppable: ({ children, droppableId }: any) => {
+    const React = require('react');
+    return children(
       {
         innerRef: () => {},
         droppableProps: {},
-        placeholder: <div data-testid={`droppable-placeholder-${droppableId}`} />,
+        placeholder: React.createElement('div', { 'data-testid': `droppable-placeholder-${droppableId}` }),
       },
       {}
-    ),
+    );
+  },
   Draggable: ({ children, draggableId }: any) =>
     children(
       {

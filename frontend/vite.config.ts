@@ -1,11 +1,20 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import path from "path";
 
 // https://vitejs.dev/config/
 export default defineConfig({
   // Base path for deployment
   base: "/",
   plugins: [react()],
+  resolve: {
+    alias: {
+      "@": path.resolve(__dirname, "src"),
+      "@/features": path.resolve(__dirname, "src/features"),
+      "@/shared": path.resolve(__dirname, "src/shared"),
+      "@/app": path.resolve(__dirname, "src/app"),
+    },
+  },
   server: {
     port: 8181, // Set the frontend server port to 8181
     host: "0.0.0.0", // Allow connections from outside the container

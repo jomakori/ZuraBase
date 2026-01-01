@@ -34,112 +34,114 @@ jest.mock('@/features/strands/services/syncService', () => ({
 // Mock child components
 jest.mock('@/features/strands/components/TagChip', () => ({
   __esModule: true,
-  default: ({ tag, removable, onRemove }: any) => (
-    <div data-testid={`tag-chip-${tag}`}>
-      {tag}
-      {removable && <button onClick={() => onRemove?.(tag)}>Remove</button>}
-    </div>
-  ),
+  default: ({ tag, removable, onRemove }: any) => {
+    const React = require('react');
+    const children = [tag];
+    if (removable) {
+      children.push(React.createElement('button', { onClick: () => onRemove?.(tag) }, 'Remove'));
+    }
+    return React.createElement('div', { 'data-testid': `tag-chip-${tag}` }, children);
+  },
 }));
 
 jest.mock('@/features/strands/components/SyncLogViewer', () => ({
   __esModule: true,
-  default: ({ syncHistory, onRollback }: any) => (
-    <div data-testid="sync-log-viewer">
-      <div>Sync History ({syncHistory.length})</div>
-      <button onClick={() => onRollback?.(syncHistory[0])}>Rollback</button>
-    </div>
-  ),
+  default: ({ syncHistory, onRollback }: any) => {
+    const React = require('react');
+    return React.createElement('div', { 'data-testid': 'sync-log-viewer' },
+      React.createElement('div', null, 'Sync History (', syncHistory.length, ')'),
+      React.createElement('button', { onClick: () => onRollback?.(syncHistory[0]) }, 'Rollback')
+    );
+  },
 }));
 
 jest.mock('@/features/strands/components/ConfirmDialog', () => ({
   __esModule: true,
-  default: ({ isOpen, title, message, onConfirm, onCancel }: any) =>
-    isOpen ? (
-      <div data-testid="confirm-dialog">
-        <h3>{title}</h3>
-        <p>{message}</p>
-        <button onClick={onConfirm}>Confirm</button>
-        <button onClick={onCancel}>Cancel</button>
-      </div>
-    ) : null,
+  default: ({ isOpen, title, message, onConfirm, onCancel }: any) => {
+    const React = require('react');
+    return isOpen ? React.createElement('div', { 'data-testid': 'confirm-dialog' },
+      React.createElement('h3', null, title),
+      React.createElement('p', null, message),
+      React.createElement('button', { onClick: onConfirm }, 'Confirm'),
+      React.createElement('button', { onClick: onCancel }, 'Cancel')
+    ) : null;
+  },
 }));
 
 jest.mock('@/features/strands/components/FileUpload', () => ({
   __esModule: true,
-  default: ({ onFilesSelected, disabled }: any) => (
-    <div data-testid="file-upload">
-      <button onClick={() => onFilesSelected?.([new File([''], 'test.txt')])} disabled={disabled}>
-        Upload
-      </button>
-    </div>
-  ),
+  default: ({ onFilesSelected, disabled }: any) => {
+    const React = require('react');
+    return React.createElement('div', { 'data-testid': 'file-upload' },
+      React.createElement('button', { onClick: () => onFilesSelected?.([new File([''], 'test.txt')]), disabled: disabled }, 'Upload')
+    );
+  },
 }));
 
 jest.mock('@/features/strands/components/UploadProgress', () => ({
   __esModule: true,
-  default: ({ uploads, onCancel }: any) => (
-    <div data-testid="upload-progress">
-      {uploads.map((upload: any) => (
-        <div key={upload.fileName}>
-          {upload.fileName} - {upload.status}
-          <button onClick={() => onCancel?.(upload.fileName)}>Cancel</button>
-        </div>
-      ))}
-    </div>
-  ),
+  default: ({ uploads, onCancel }: any) => {
+    const React = require('react');
+    return React.createElement('div', { 'data-testid': 'upload-progress' },
+      uploads.map((upload: any) =>
+        React.createElement('div', { key: upload.fileName },
+          upload.fileName, ' - ', upload.status,
+          React.createElement('button', { onClick: () => onCancel?.(upload.fileName) }, 'Cancel')
+        )
+      )
+    );
+  },
 }));
 
 jest.mock('@/features/strands/components/AttachmentList', () => ({
   __esModule: true,
-  default: ({ attachments, onDelete, disabled }: any) => (
-    <div data-testid="attachment-list">
-      {attachments.map((att: any) => (
-        <div key={att.id}>
-          {att.original_name}
-          <button onClick={() => onDelete?.(att.id)} disabled={disabled}>
-            Delete
-          </button>
-        </div>
-      ))}
-    </div>
-  ),
+  default: ({ attachments, onDelete, disabled }: any) => {
+    const React = require('react');
+    return React.createElement('div', { 'data-testid': 'attachment-list' },
+      attachments.map((att: any) =>
+        React.createElement('div', { key: att.id },
+          att.original_name,
+          React.createElement('button', { onClick: () => onDelete?.(att.id), disabled: disabled }, 'Delete')
+        )
+      )
+    );
+  },
 }));
 
 jest.mock('@/shared/components/Dialog', () => ({
   __esModule: true,
-  default: ({ isOpen, title, message, onConfirm, onCancel }: any) =>
-    isOpen ? (
-      <div data-testid="dialog">
-        <h3>{title}</h3>
-        <p>{message}</p>
-        <button onClick={onConfirm}>Confirm</button>
-        <button onClick={onCancel}>Cancel</button>
-      </div>
-    ) : null,
+  default: ({ isOpen, title, message, onConfirm, onCancel }: any) => {
+    const React = require('react');
+    return isOpen ? React.createElement('div', { 'data-testid': 'dialog' },
+      React.createElement('h3', null, title),
+      React.createElement('p', null, message),
+      React.createElement('button', { onClick: onConfirm }, 'Confirm'),
+      React.createElement('button', { onClick: onCancel }, 'Cancel')
+    ) : null;
+  },
 }));
 
 jest.mock('@/shared/components/Toast', () => ({
   __esModule: true,
-  default: ({ isOpen, message, onClose }: any) =>
-    isOpen ? (
-      <div data-testid="toast">
-        <span>{message}</span>
-        <button onClick={onClose}>Close</button>
-      </div>
-    ) : null,
+  default: ({ isOpen, message, onClose }: any) => {
+    const React = require('react');
+    return isOpen ? React.createElement('div', { 'data-testid': 'toast' },
+      React.createElement('span', null, message),
+      React.createElement('button', { onClick: onClose }, 'Close')
+    ) : null;
+  },
 }));
 
 jest.mock('@/features/strands/components/SyncProgressModal', () => ({
   __esModule: true,
-  default: ({ isOpen, progress, onClose, onCancel }: any) =>
-    isOpen ? (
-      <div data-testid="sync-progress-modal">
-        <div>Progress: {progress.status}</div>
-        <button onClick={onClose}>Close</button>
-        <button onClick={onCancel}>Cancel</button>
-      </div>
-    ) : null,
+  default: ({ isOpen, progress, onClose, onCancel }: any) => {
+    const React = require('react');
+    return isOpen ? React.createElement('div', { 'data-testid': 'sync-progress-modal' },
+      React.createElement('div', null, 'Progress: ', progress.status),
+      React.createElement('button', { onClick: onClose }, 'Close'),
+      React.createElement('button', { onClick: onCancel }, 'Cancel')
+    ) : null;
+  },
 }));
 
 describe('StrandDetail', () => {

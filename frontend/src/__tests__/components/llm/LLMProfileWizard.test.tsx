@@ -14,22 +14,25 @@ jest.mock('@/shared/hooks/useLLMConnectionWizard', () => ({
 
 // Mock the SearchableModelSelect component
 jest.mock('@/shared/components/SearchableModelSelect', () => {
-  const MockSearchableModelSelect = ({ value, onChange, options, disabled, loading, placeholder }: any) => (
-    <div data-testid="searchable-model-select">
-      <select 
-        value={value} 
-        onChange={(e) => onChange(e.target.value)}
-        disabled={disabled}
-        data-testid="model-select"
-      >
-        <option value="">{placeholder}</option>
-        {options.map((opt: string) => (
-          <option key={opt} value={opt}>{opt}</option>
-        ))}
-      </select>
-      {loading && <span data-testid="model-select-loading">Loading...</span>}
-    </div>
-  );
+  const MockSearchableModelSelect = ({ value, onChange, options, disabled, loading, placeholder }: any) => {
+    const React = require('react');
+    const children = [];
+    children.push(React.createElement('option', { value: '' }, placeholder));
+    children.push(...options.map((opt: string) =>
+      React.createElement('option', { key: opt, value: opt }, opt)
+    ));
+    if (loading) {
+      children.push(React.createElement('span', { 'data-testid': 'model-select-loading' }, 'Loading...'));
+    }
+    return React.createElement('div', { 'data-testid': 'searchable-model-select' },
+      React.createElement('select', {
+        value: value,
+        onChange: (e: any) => onChange(e.target.value),
+        disabled: disabled,
+        'data-testid': 'model-select'
+      }, children)
+    );
+  };
   return { SearchableModelSelect: MockSearchableModelSelect };
 });
 

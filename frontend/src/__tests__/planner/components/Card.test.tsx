@@ -10,17 +10,26 @@ import { PlannerCard } from '@/features/planner/types';
 
 // Mock the markdown editor and ReactMarkdown to avoid complexity
 jest.mock('@milkdown/react', () => ({
-  MilkdownProvider: ({ children }: any) => <div>{children}</div>,
+  MilkdownProvider: ({ children }: any) => {
+    const React = require('react');
+    return React.createElement('div', null, children);
+  },
 }));
 
 jest.mock('@/shared/components/MarkdownEditor', () => ({
   __esModule: true,
-  default: () => <div data-testid="markdown-editor" />,
+  default: () => {
+    const React = require('react');
+    return React.createElement('div', { 'data-testid': 'markdown-editor' });
+  },
 }));
 
 jest.mock('react-markdown', () => ({
   __esModule: true,
-  default: ({ children }: any) => <div data-testid="react-markdown">{children}</div>,
+  default: ({ children }: any) => {
+    const React = require('react');
+    return React.createElement('div', { 'data-testid': 'react-markdown' }, children);
+  },
 }));
 
 // Mock drag‑and‑drop

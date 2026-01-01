@@ -1,5 +1,5 @@
 import React from "react";
-import "../index.css";
+import "@/styles/index.css";
 
 /**
  * A visually appealing splash screen that animates the favicon with a smooth spin.

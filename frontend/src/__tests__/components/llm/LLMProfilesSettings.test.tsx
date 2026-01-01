@@ -10,14 +10,15 @@ import LLMProfilesSettings from '@/shared/components/LLMProfilesSettings';
 
 // Mock the LLMProfileWizard component
 jest.mock('@/shared/components/LLMProfileWizard', () => {
-  const MockWizard = ({ onComplete, onSkip, initialData }: any) => (
-    <div data-testid="llm-profile-wizard">
-      <div>LLM Profile Wizard</div>
-      <div>Initial Data: {initialData?.id ? 'Edit' : 'Create'}</div>
-      <button onClick={onSkip} data-testid="close-wizard">Close</button>
-      <button onClick={onComplete} data-testid="complete-wizard">Complete</button>
-    </div>
-  );
+  const MockWizard = ({ onComplete, onSkip, initialData }: any) => {
+    const React = require('react');
+    return React.createElement('div', { 'data-testid': 'llm-profile-wizard' },
+      React.createElement('div', null, 'LLM Profile Wizard'),
+      React.createElement('div', null, 'Initial Data: ', initialData?.id ? 'Edit' : 'Create'),
+      React.createElement('button', { onClick: onSkip, 'data-testid': 'close-wizard' }, 'Close'),
+      React.createElement('button', { onClick: onComplete, 'data-testid': 'complete-wizard' }, 'Complete')
+    );
+  };
   return MockWizard;
 });
 

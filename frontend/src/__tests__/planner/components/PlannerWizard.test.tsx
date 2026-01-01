@@ -10,13 +10,13 @@ import { PlannerTemplate } from '@/features/planner/types';
 
 // Mock Headless UI components
 jest.mock('@headlessui/react', () => ({
-  Dialog: ({ children, open, onClose }: any) =>
-    open ? (
-      <div data-testid="dialog">
-        <div data-testid="dialog-overlay" onClick={onClose} />
-        <div data-testid="dialog-panel">{children}</div>
-      </div>
-    ) : null,
+  Dialog: ({ children, open, onClose }: any) => {
+    const React = require('react');
+    return open ? React.createElement('div', { 'data-testid': 'dialog' },
+      React.createElement('div', { 'data-testid': 'dialog-overlay', onClick: onClose }),
+      React.createElement('div', { 'data-testid': 'dialog-panel' }, children)
+    ) : null;
+  },
   Transition: ({ children, show }: any) => (show ? children : null),
   TransitionChild: ({ children }: any) => children,
 }));
